@@ -3,19 +3,14 @@ using Microsoft.Win32;
 
 namespace ScreenUpdater.Lcd;
 
-public enum Orientation
-{
-    Portrait = 0,
-    ReversePortrait = 1,
-    Landscape = 2,
-    ReverseLandscape = 3,
-}
-
-/// <summary>Turing Smart Screen 3.5" (revision A) serial protocol.</summary>
+/// <summary>Turing Smart Screen 3.5" (revision A) serial protocol, driven in landscape.</summary>
 public sealed class TuringLcd : IDisposable
 {
-    const int NativeWidth = 320;
-    const int NativeHeight = 480;
+    public const int Width = 480;
+    public const int Height = 320;
+
+    const int Landscape = 2;
+    const int ReverseLandscape = 3;
 
     const byte CmdClear = 102;
     const byte CmdScreenOff = 108;
@@ -27,15 +22,9 @@ public sealed class TuringLcd : IDisposable
 
     readonly SerialPort _port;
 
-    public int Width { get; }
-    public int Height { get; }
-
-    public TuringLcd(string portName, Orientation orientation)
+    /// <param name="flip">Rotate the image by 180°.</param>
+    public TuringLcd(string portName, bool flip)
     {
-        bool landscape = orientation is Orientation.Landscape or Orientation.ReverseLandscape;
-        Width = landscape ? NativeHeight : NativeWidth;
-        Height = landscape ? NativeWidth : NativeHeight;
-
         _port = new SerialPort(portName, 115200)
         {
             Handshake = Handshake.RequestToSend,
@@ -46,7 +35,7 @@ public sealed class TuringLcd : IDisposable
         _port.Open();
 
         Hello();
-        SetOrientation(orientation);
+        SetOrientation(flip ? ReverseLandscape : Landscape);
     }
 
     /// <summary>COM port of the screen, looked up by its USB identity.</summary>
@@ -88,11 +77,11 @@ public sealed class TuringLcd : IDisposable
     void Send(byte cmd, int x = 0, int y = 0, int ex = 0, int ey = 0) =>
         _port.Write(Header(x, y, ex, ey, cmd), 0, 6);
 
-    void SetOrientation(Orientation orientation)
+    void SetOrientation(int orientation)
     {
         var buf = new byte[16];
         buf[5] = CmdSetOrientation;
-        buf[6] = (byte)((int)orientation + 100);
+        buf[6] = (byte)(orientation + 100);
         buf[7] = (byte)(Width >> 8);
         buf[8] = (byte)(Width & 255);
         buf[9] = (byte)(Height >> 8);

@@ -33,14 +33,16 @@ using var instance = new Mutex(true, @"Global\ScreenUpdater", out bool first);
 if (!first && previewPath is null) return;
 
 var config = Config.Load(baseDirectory);
-bool landscape = config.Orientation is Orientation.Landscape or Orientation.ReverseLandscape;
-int width = landscape ? 480 : 320;
-int height = landscape ? 320 : 480;
+const int width = TuringLcd.Width;
+const int height = TuringLcd.Height;
 
 using var frames = new FrameMonitor(config.PresentMonPath, baseDirectory, Log);
 using var sensors = new Sensors();
 using var power = new DisplayPower();
-using var dashboard = new Dashboard(width, height);
+using var dashboard = new Dashboard();
+using var weather = config is { Latitude: { } latitude, Longitude: { } longitude }
+    ? new Weather(latitude, longitude, Log)
+    : null;
 var state = new DashboardState();
 
 void Sample()
@@ -50,15 +52,17 @@ void Sample()
     state.FramesAvailable = frames.Available;
     state.Frames = foreground is { } fg ? frames.GetStats(fg.ProcessId, fg.Name) : null;
     state.Hardware = sensors.Sample();
+    state.Weather = weather?.Latest;
 
-    state.Fps.Add((float?)state.Frames?.Fps);
-    state.LowFps.Add(state.Frames is { } f ? (float)(1000 / f.P99Ms) : null);
     state.Cpu.Add(state.Hardware.CpuLoad);
-    for (int i = 0; i < state.Gpus.Length; i++)
-        state.Gpus[i].Add(i < state.Hardware.Gpus.Count ? state.Hardware.Gpus[i].Load : null);
     state.Mem.Add(state.Hardware.MemLoad);
+    for (int i = 0; i < state.Hardware.Gpus.Count; i++)
+    {
+        var gpu = state.Hardware.Gpus[i];
+        state.GpuLoad[i].Add(gpu.Load);
+        state.GpuMemory[i].Add(gpu.VramUsedMb / gpu.VramTotalMb * 100);
+    }
 }
-
 // Slow orbit within ±2 px, one step per minute.
 static Point PixelShift(TimeSpan elapsed)
 {
@@ -90,7 +94,7 @@ while (true)
     {
         var portName = config.Port ?? TuringLcd.FindPort()
             ?? throw new IOException("screen not found (USB VID_1A86 PID_5722)");
-        using var lcd = new TuringLcd(portName, config.Orientation);
+        using var lcd = new TuringLcd(portName, config.Flip);
         lcd.SetBrightness(config.Brightness);
         Log($"connected on {portName}");
 
