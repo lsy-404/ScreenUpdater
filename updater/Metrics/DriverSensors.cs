@@ -11,6 +11,7 @@ public readonly record struct GpuDriverReading(float? ClockMhz, float? PowerW);
 public sealed class DriverSensors : IDisposable
 {
     readonly Computer _computer = new() { IsCpuEnabled = true, IsGpuEnabled = true };
+    readonly AmdAdl _adl = new();
 
     public float? CpuTemp { get; private set; }
     public float? CpuPower { get; private set; }
@@ -36,6 +37,7 @@ public sealed class DriverSensors : IDisposable
                     Value(hardware, SensorType.Power, "GPU Package", "GPU Core"));
             }
         }
+        _adl.Update(gpus);
         return gpus;
     }
 
@@ -53,5 +55,9 @@ public sealed class DriverSensors : IDisposable
         return null;
     }
 
-    public void Dispose() => _computer.Close();
+    public void Dispose()
+    {
+        _computer.Close();
+        _adl.Dispose();
+    }
 }

@@ -274,21 +274,18 @@ public sealed class Dashboard : IDisposable
         int w = rect.Width - 16;
 
         DrawSpeed(x, rect.Y + 4, w, "↑", UpColor, state.System?.UploadBps);
-        DrawSpeed(x, rect.Bottom - 18, w, "↓", DownColor, state.System?.DownloadBps);
+        DrawSpeed(x, rect.Y + 19, w, "↓", DownColor, state.System?.DownloadBps);
 
-        var chart = Rectangle.FromLTRB(x, rect.Y + 21, rect.Right - 8, rect.Bottom - 21);
+        var chart = Rectangle.FromLTRB(x, rect.Y + 38, rect.Right - 8, rect.Bottom - 6);
         var upper = chart with { Height = chart.Height / 2 };
         var lower = Rectangle.FromLTRB(chart.X, upper.Bottom, chart.Right, chart.Bottom);
-        DrawGrid(chart);
+        using (var pen = new Pen(Grid))
+            _g.DrawLine(pen, chart.X, upper.Bottom, chart.Right, upper.Bottom);
 
         float max = MathF.Max(MathF.Max(state.Download.Max(), state.Upload.Max()), 102400);
         DrawSeries(upper, state.Upload, max, UpColor, fill: true);
         DrawSeries(lower, state.Download, max, DownColor, fill: true, downward: true);
-
-        var (scale, unit) = Speed(max);
-        _g.DrawString($"{scale} {unit}", _small, _muted, new RectangleF(x, chart.Y + 1, w - 1, 12), _right);
     }
-
     void DrawSpeed(int x, int y, int width, string arrow, Color color, double? bytesPerSecond)
     {
         using (var brush = new SolidBrush(color))
