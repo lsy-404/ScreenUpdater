@@ -1,23 +1,25 @@
-using System.Diagnostics;
-using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
 
 namespace ScreenUpdater.Metrics;
 
+/// <param name="Type">The driver's name for the engine, e.g. "3D", "Video Codec 0" or "VideoEncode".</param>
+public sealed record EngineLoad(string Type, int Index, float Load);
+
 /// <param name="Load">Busiest engine of the adapter, as Task Manager reports utilisation.</param>
-/// <param name="Engine">Type of that engine, e.g. "3D" or "VideoEncode".</param>
+/// <param name="Engines">Utilisation per engine type of this adapter, in engine order.</param>
 public sealed record GpuSample(
-    string Name, float? Load, string? Engine, float? Temp, float? VramUsedMb, float VramTotalMb);
+    string Name, float? Load, IReadOnlyList<EngineLoad> Engines, float? Temp, float? ClockMhz, float? PowerW,
+    float? VramUsedGb, float VramTotalGb);
 
 public sealed record HardwareSample(
-    float? CpuLoad,
+    float CpuLoad, float CpuGhz, float? CpuTemp, float? CpuPower,
     IReadOnlyList<GpuSample> Gpus,
     float MemLoad, float MemUsedGb, float MemTotalGb);
 
 /// <summary>
-/// System metrics from the sources Task Manager uses: performance counters for CPU and GPU load,
+/// System metrics from the sources Task Manager uses: PDH performance counters for CPU and GPU load,
 /// and the display kernel's adapter performance data for GPU temperature.
 /// </summary>
 public sealed partial class Sensors : IDisposable
@@ -28,23 +30,29 @@ public sealed partial class Sensors : IDisposable
     {
         public required string Name;
         public required string LuidKey;
-        public required float TotalMb;
+        public required float TotalGb;
         public uint Handle;
     }
 
-    readonly PerformanceCounter _cpu = new("Processor Information", "% Processor Utility", "_Total");
-    readonly PerformanceCounterCategory _engines = new("GPU Engine");
-    readonly PerformanceCounterCategory _adapterMemory = new("GPU Adapter Memory");
+    readonly PdhQuery _pdh = new();
+    readonly IntPtr _cpu;
+    readonly IntPtr _cpuPerformance;
+    readonly IntPtr _cpuBaseMhz;
+    readonly IntPtr _engines;
+    readonly IntPtr _adapterMemory;
+    readonly DriverSensors _driver = new();
     readonly Gpu[] _gpus;
-    Dictionary<string, CounterSample> _previousEngines = [];
 
     public Sensors()
     {
-        _cpu.NextValue();
+        _cpu = _pdh.Add(@"\Processor Information(_Total)\% Processor Utility");
+        _cpuPerformance = _pdh.Add(@"\Processor Information(_Total)\% Processor Performance");
+        _cpuBaseMhz = _pdh.Add(@"\Processor Information(_Total)\Processor Frequency");
+        _engines = _pdh.Add(@"\GPU Engine(*)\Utilization Percentage");
+        _adapterMemory = _pdh.Add(@"\GPU Adapter Memory(*)\Dedicated Usage");
+        _pdh.Collect();
 
-        var active = _adapterMemory.GetInstanceNames()
-            .Select(LuidKey)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var active = ReadDedicatedUsage().Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // The adapters with the most dedicated memory, which leaves out integrated graphics.
         var gpus = new List<Gpu>();
@@ -59,13 +67,13 @@ public sealed partial class Sensors : IDisposable
                 var luidKey = $"0x{luid >> 32:X8}_0x{luid & 0xFFFFFFFF:X8}";
                 if (!active.Contains(luidKey)) continue;
 
-                var gpu = new Gpu { Name = description, LuidKey = luidKey, TotalMb = memory / 1048576f };
+                var gpu = new Gpu { Name = description, LuidKey = luidKey, TotalGb = memory / 1073741824f };
                 var open = new OpenAdapterFromLuid { LowPart = (uint)luid, HighPart = (int)(luid >> 32) };
                 if (D3DKMTOpenAdapterFromLuid(ref open) == 0) gpu.Handle = open.Adapter;
                 gpus.Add(gpu);
             }
         }
-        _gpus = [.. gpus.OrderByDescending(g => g.TotalMb).Take(GpuCount)];
+        _gpus = [.. gpus.OrderByDescending(g => g.TotalGb).Take(GpuCount)];
         foreach (var gpu in gpus.Except(_gpus)) Close(gpu);
     }
 
@@ -76,83 +84,73 @@ public sealed partial class Sensors : IDisposable
         float totalGb = memory.TotalPhysical / 1073741824f;
         float usedGb = (memory.TotalPhysical - memory.AvailablePhysical) / 1073741824f;
 
+        _pdh.Collect();
         var engineLoad = ReadEngineLoad();
         var dedicated = ReadDedicatedUsage();
+        var driver = _driver.Update();
 
         var gpus = new List<GpuSample>(_gpus.Length);
         foreach (var gpu in _gpus)
         {
             float? load = null;
-            string? engine = null;
-            foreach (var ((luid, _, type), value) in engineLoad)
+            var engines = new Dictionary<string, EngineLoad>();
+            foreach (var ((luid, index, type), value) in engineLoad)
             {
                 if (!luid.Equals(gpu.LuidKey, StringComparison.OrdinalIgnoreCase)) continue;
-                if (load is null || value > load)
-                {
-                    load = value;
-                    engine = type;
-                }
-            }
+                float clamped = (float)Math.Min(value, 100);
+                load = Math.Max(load ?? 0, clamped);
 
+                // Engines sharing a type (several "Copy" nodes) are shown as one, at the busiest value.
+                engines[type] = engines.TryGetValue(type, out var existing)
+                    ? existing with { Load = Math.Max(existing.Load, clamped) }
+                    : new EngineLoad(type, int.Parse(index), clamped);
+            }
+            driver.TryGetValue(gpu.Name, out var reading);
             gpus.Add(new GpuSample(
-                gpu.Name,
-                load is { } l ? Math.Min(l, 100) : null,
-                load > 0 ? engine : null,
-                ReadTemperature(gpu),
-                dedicated.TryGetValue(gpu.LuidKey, out long bytes) ? bytes / 1048576f : null,
-                gpu.TotalMb));
+                gpu.Name, load, [.. engines.Values.OrderBy(e => e.Index)], ReadTemperature(gpu), reading.ClockMhz, reading.PowerW,
+                dedicated.TryGetValue(gpu.LuidKey, out double bytes) ? (float)(bytes / 1073741824) : null,
+                gpu.TotalGb));
         }
 
-        return new HardwareSample(Math.Min(_cpu.NextValue(), 100), gpus, memory.MemoryLoad, usedGb, totalGb);
+        return new HardwareSample(
+            (float)Math.Min(_pdh.Value(_cpu) ?? 0, 100),
+            (float)((_pdh.Value(_cpuBaseMhz) ?? 0) * (_pdh.Value(_cpuPerformance) ?? 0) / 100000),
+            _driver.CpuTemp, _driver.CpuPower,
+            gpus, memory.MemoryLoad, usedGb, totalGb);
     }
 
     /// <summary>Utilisation per (adapter, engine index, engine type), summed over processes.</summary>
-    Dictionary<(string Luid, string Index, string Type), float> ReadEngineLoad()
+    Dictionary<(string Luid, string Index, string Type), double> ReadEngineLoad()
     {
-        var result = new Dictionary<(string, string, string), float>();
-        var current = new Dictionary<string, CounterSample>();
-
-        var data = _engines.ReadCategory();
-        if (data["Utilization Percentage"] is { } instances)
+        var result = new Dictionary<(string, string, string), double>();
+        foreach (var (instance, value) in _pdh.Values(_engines))
         {
-            foreach (InstanceData instance in instances.Values)
-            {
-                current[instance.InstanceName] = instance.Sample;
-                if (!_previousEngines.TryGetValue(instance.InstanceName, out var previous)) continue;
+            var match = EngineInstance().Match(instance);
+            if (!match.Success) continue;
 
-                var match = EngineInstance().Match(instance.InstanceName);
-                if (!match.Success) continue;
-
-                var key = (match.Groups[1].Value, match.Groups[2].Value, match.Groups[3].Value);
-                result[key] = result.GetValueOrDefault(key) + CounterSample.Calculate(previous, instance.Sample);
-            }
-        }
-
-        _previousEngines = current;
-        return result;
-    }
-
-    Dictionary<string, long> ReadDedicatedUsage()
-    {
-        var result = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-        if (_adapterMemory.ReadCategory()["Dedicated Usage"] is { } instances)
-        {
-            foreach (InstanceData instance in instances.Values)
-                result[LuidKey(instance.InstanceName)] = instance.RawValue;
+            var key = (match.Groups[1].Value, match.Groups[2].Value, match.Groups[3].Value);
+            result[key] = result.GetValueOrDefault(key) + value;
         }
         return result;
     }
 
+    /// <summary>Dedicated memory in use, in bytes, by adapter LUID.</summary>
+    Dictionary<string, double> ReadDedicatedUsage()
+    {
+        var result = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (instance, value) in _pdh.Values(_adapterMemory))
+            result[LuidKey(instance)] = value;
+        return result;
+    }
     static float? ReadTemperature(Gpu gpu)
     {
         if (gpu.Handle == 0) return null;
 
-        var perf = new AdapterPerfData();
         int size = Marshal.SizeOf<AdapterPerfData>();
         IntPtr buffer = Marshal.AllocHGlobal(size);
         try
         {
-            Marshal.StructureToPtr(perf, buffer, false);
+            Marshal.StructureToPtr(new AdapterPerfData(), buffer, false);
             var query = new QueryAdapterInfo
             {
                 Adapter = gpu.Handle,
@@ -161,15 +159,15 @@ public sealed partial class Sensors : IDisposable
                 DataSize = (uint)size,
             };
             if (D3DKMTQueryAdapterInfo(ref query) != 0) return null;
-            perf = Marshal.PtrToStructure<AdapterPerfData>(buffer);
+
+            // Deci-degrees Celsius; 0 when the driver does not report it.
+            uint temperature = Marshal.PtrToStructure<AdapterPerfData>(buffer).Temperature;
+            return temperature > 0 ? temperature / 10f : null;
         }
         finally
         {
             Marshal.FreeHGlobal(buffer);
         }
-
-        // Deci-degrees Celsius; 0 when the driver does not report it.
-        return perf.Temperature > 0 ? perf.Temperature / 10f : null;
     }
 
     /// <summary>"luid_0x00000000_0x0001D52A_phys_0" → "0x00000000_0x0001D52A".</summary>
@@ -189,7 +187,8 @@ public sealed partial class Sensors : IDisposable
     public void Dispose()
     {
         foreach (var gpu in _gpus) Close(gpu);
-        _cpu.Dispose();
+        _pdh.Dispose();
+        _driver.Dispose();
     }
 
     const int AdapterPerfDataType = 62; // KMTQAITYPE_ADAPTERPERFDATA

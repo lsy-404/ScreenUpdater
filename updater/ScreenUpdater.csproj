@@ -10,9 +10,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="11.0.0" />
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
     <PackageReference Include="System.Drawing.Common" Version="10.0.3" />
     <PackageReference Include="System.IO.Ports" Version="10.0.3" />
+    <PackageReference Include="System.Management" Version="10.0.3" />
   </ItemGroup>
 
 </Project>

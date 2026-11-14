@@ -10,7 +10,6 @@ public readonly record struct FrameStats(double Fps, double P50Ms, double P95Ms,
 /// <summary>Streams per-frame data from the PresentMon console application.</summary>
 public sealed class FrameMonitor : IDisposable
 {
-    const string SessionName = "ScreenUpdater";
     const double WindowSeconds = 10;
 
     sealed class ProcessFrames
@@ -22,50 +21,74 @@ public sealed class FrameMonitor : IDisposable
     readonly object _lock = new();
     readonly Dictionary<int, ProcessFrames> _processes = [];
     readonly Stopwatch _clock = Stopwatch.StartNew();
-    readonly Process? _process;
+    readonly ChildProcessJob _job = new();
+    readonly Action<string> _log;
+    readonly string? _exe;
+    readonly string _sessionName;
+    volatile Process? _process;
+    volatile bool _disposed;
 
     // Smallest observed (arrival − trace time): maps trace timestamps onto the local clock.
-    double _clockOffset = double.MaxValue;
+    double _clockOffset;
 
     public bool Available => _process is { HasExited: false };
 
-    public FrameMonitor(string? configuredPath, string baseDirectory, Action<string> log)
+    public FrameMonitor(string? configuredPath, string baseDirectory, string sessionName, Action<string> log)
     {
-        var exe = Locate(configuredPath, baseDirectory);
-        if (exe is null)
+        _log = log;
+        _sessionName = sessionName;
+        _exe = Locate(configuredPath, baseDirectory);
+        if (_exe is null)
         {
             log("PresentMon not found; frame statistics disabled");
             return;
         }
+        new Thread(Supervise) { IsBackground = true, Name = "PresentMon" }.Start();
+    }
 
-        var info = new ProcessStartInfo(exe)
+    /// <summary>Keeps PresentMon running, restarting it when it exits.</summary>
+    void Supervise()
+    {
+        while (!_disposed)
         {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        foreach (var arg in new[]
-                 {
-                     "--output_stdout", "--no_console_stats", "--stop_existing_session",
-                     "--session_name", SessionName,
-                 })
-            info.ArgumentList.Add(arg);
+            var info = new ProcessStartInfo(_exe!)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            foreach (var arg in new[]
+                     {
+                         "--output_stdout", "--no_console_stats", "--stop_existing_session",
+                         "--session_name", _sessionName,
+                     })
+                info.ArgumentList.Add(arg);
 
-        try
-        {
-            _process = Process.Start(info)!;
+            try
+            {
+                using var process = Process.Start(info)!;
+                _job.Add(process);
+                process.ErrorDataReceived += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) _log($"PresentMon: {e.Data}"); };
+                process.BeginErrorReadLine();
+                _process = process;
+                _log($"PresentMon started: {_exe}");
+
+                _clockOffset = double.MaxValue;
+                ReadLoop(process.StandardOutput);
+                process.WaitForExit();
+            }
+            catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+            {
+                _log($"PresentMon failed: {e.Message}");
+            }
+            finally
+            {
+                _process = null;
+            }
+
+            if (!_disposed) Thread.Sleep(5000);
         }
-        catch (Exception e)
-        {
-            log($"PresentMon failed to start: {e.Message}");
-            return;
-        }
-
-        _process.ErrorDataReceived += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) log($"PresentMon: {e.Data}"); };
-        _process.BeginErrorReadLine();
-        new Thread(ReadLoop) { IsBackground = true, Name = "PresentMon" }.Start();
-        log($"PresentMon started: {exe}");
     }
 
     static string? Locate(string? configuredPath, string baseDirectory)
@@ -90,9 +113,8 @@ public sealed class FrameMonitor : IDisposable
         return candidates.FirstOrDefault();
     }
 
-    void ReadLoop()
+    void ReadLoop(StreamReader reader)
     {
-        var reader = _process!.StandardOutput;
         var header = reader.ReadLine();
         if (header is null) return;
 
@@ -184,14 +206,7 @@ public sealed class FrameMonitor : IDisposable
 
     public void Dispose()
     {
-        if (_process is null) return;
-        try
-        {
-            if (!_process.HasExited) _process.Kill();
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        _process.Dispose();
+        _disposed = true;
+        _job.Dispose();
     }
 }

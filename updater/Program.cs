@@ -36,8 +36,10 @@ var config = Config.Load(baseDirectory);
 const int width = TuringLcd.Width;
 const int height = TuringLcd.Height;
 
-using var frames = new FrameMonitor(config.PresentMonPath, baseDirectory, Log);
+using var frames = new FrameMonitor(
+    config.PresentMonPath, baseDirectory, previewPath is null ? "ScreenUpdater" : "ScreenUpdaterPreview", Log);
 using var sensors = new Sensors();
+var system = new SystemStats();
 using var power = new DisplayPower();
 using var dashboard = new Dashboard();
 using var weather = config is { Latitude: { } latitude, Longitude: { } longitude }
@@ -48,21 +50,22 @@ var state = new DashboardState();
 void Sample()
 {
     var foreground = ForegroundApp.Get();
-    state.AppName = foreground?.Name;
     state.FramesAvailable = frames.Available;
     state.Frames = foreground is { } fg ? frames.GetStats(fg.ProcessId, fg.Name) : null;
-    state.Hardware = sensors.Sample();
     state.Weather = weather?.Latest;
+    state.Fps.Add((float?)state.Frames?.Fps);
 
-    state.Cpu.Add(state.Hardware.CpuLoad);
-    state.Mem.Add(state.Hardware.MemLoad);
-    for (int i = 0; i < state.Hardware.Gpus.Count; i++)
-    {
-        var gpu = state.Hardware.Gpus[i];
-        state.GpuLoad[i].Add(gpu.Load);
-        state.GpuMemory[i].Add(gpu.VramUsedMb / gpu.VramTotalMb * 100);
-    }
+    var stats = state.System = system.Sample();
+    state.Download.Add((float)stats.DownloadBps);
+    state.Upload.Add((float)stats.UploadBps);
+
+    var hardware = state.Hardware = sensors.Sample();
+    state.Cpu.Add(hardware.CpuLoad);
+    state.Mem.Add(hardware.MemLoad);
+    for (int i = 0; i < hardware.Gpus.Count; i++)
+        state.Gpus[i].Add(hardware.Gpus[i]);
 }
+
 // Slow orbit within ±2 px, one step per minute.
 static Point PixelShift(TimeSpan elapsed)
 {
