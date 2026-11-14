@@ -43,7 +43,7 @@ public sealed class DashboardState
     public readonly History Fps = new(HistoryLength);
     public readonly History LowFps = new(HistoryLength);
     public readonly History Cpu = new(HistoryLength);
-    public readonly History Gpu = new(HistoryLength);
+    public readonly History[] Gpus = [.. Enumerable.Range(0, Sensors.GpuCount).Select(_ => new History(HistoryLength))];
     public readonly History Mem = new(HistoryLength);
 }
 
@@ -59,7 +59,7 @@ public sealed class Dashboard : IDisposable
     static readonly Color LowColor = Color.FromArgb(0xfc, 0xe1, 0x00);
     static readonly Color CpuColor = Color.FromArgb(0x4c, 0xc2, 0xff);
     static readonly Color MemColor = Color.FromArgb(0xb4, 0xa7, 0xf5);
-    static readonly Color GpuColor = Color.FromArgb(0x5f, 0xd0, 0xb8);
+    static readonly Color[] GpuColors = [Color.FromArgb(0x5f, 0xd0, 0xb8), Color.FromArgb(0xf0, 0xa5, 0x60)];
 
     const int Pad = 6;
     const int HeaderHeight = 26;
@@ -95,10 +95,13 @@ public sealed class Dashboard : IDisposable
         _g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
     }
 
-    public Bitmap Render(DashboardState state)
+    /// <param name="shift">Offset of the whole layout, moved over time so static pixels do not persist.</param>
+    public Bitmap Render(DashboardState state, Point shift)
     {
         _g.SmoothingMode = SmoothingMode.None;
+        _g.ResetTransform();
         _g.Clear(Background);
+        _g.TranslateTransform(shift.X, shift.Y);
 
         DrawHeader(state);
 
@@ -106,33 +109,35 @@ public sealed class Dashboard : IDisposable
         int inner = _width - 2 * Pad;
         int top = HeaderHeight + 2;
 
-        var fpsCard = new Rectangle(Pad, top, inner, landscape ? 140 : 178);
+        var fpsCard = new Rectangle(Pad, top, inner, landscape ? 128 : 178);
         DrawFpsCard(fpsCard, state, landscape);
 
         int y = fpsCard.Bottom + Pad;
         var hw = state.Hardware;
-        var cards = new (string Name, Color Color, float? Load, string Detail, History History)[]
+        var cards = new List<(string Name, Color Color, float? Load, string Detail, History History)>
         {
             ("CPU", CpuColor, hw?.CpuLoad, Join(Unit(hw?.CpuTemp, "°C"), Unit(hw?.CpuPower, "W")), state.Cpu),
-            (ShortGpuName(hw?.GpuName), GpuColor, hw?.GpuLoad,
-                Join(Unit(hw?.GpuTemp, "°C"), Unit(hw?.GpuPower, "W"), Gigabytes(hw?.VramUsedMb / 1024, "G")), state.Gpu),
-            ("内存", MemColor, hw?.MemLoad,
-                hw?.MemUsedGb is { } used && hw.MemTotalGb is { } total ? $"{used:0.0} / {total:0.0} GB" : "", state.Mem),
         };
-
-        if (landscape)
+        for (int i = 0; i < state.Gpus.Length; i++)
         {
-            int w = (inner - 2 * Pad) / 3;
-            for (int i = 0; i < cards.Length; i++)
-                DrawLoadCard(new Rectangle(Pad + i * (w + Pad), y, w, _height - y - Pad), cards[i]);
+            var gpu = hw is not null && i < hw.Gpus.Count ? hw.Gpus[i] : null;
+            cards.Add((ShortGpuName(gpu?.Name), GpuColors[i % GpuColors.Length], gpu?.Load,
+                Join(Unit(gpu?.Temp, "°C"), Unit(gpu?.Power, "W"), Gigabytes(gpu?.VramUsedMb / 1024, "G")),
+                state.Gpus[i]));
         }
-        else
-        {
-            int h = (_height - y - Pad - 2 * Pad) / 3;
-            for (int i = 0; i < cards.Length; i++)
-                DrawLoadCard(new Rectangle(Pad, y + i * (h + Pad), inner, h), cards[i]);
-        }
+        cards.Add(("内存", MemColor, hw?.MemLoad,
+            hw?.MemUsedGb is { } used && hw.MemTotalGb is { } total ? $"{used:0.0} / {total:0.0} GB" : "", state.Mem));
 
+        int columns = landscape ? 2 : 1;
+        int rows = (cards.Count + columns - 1) / columns;
+        int w = (inner - (columns - 1) * Pad) / columns;
+        int h = (_height - y - Pad - (rows - 1) * Pad) / rows;
+        for (int i = 0; i < cards.Count; i++)
+        {
+            DrawLoadCard(
+                new Rectangle(Pad + i % columns * (w + Pad), y + i / columns * (h + Pad), w, h),
+                cards[i]);
+        }
         return _bitmap;
     }
 
@@ -163,7 +168,7 @@ public sealed class Dashboard : IDisposable
             ("P50", frames?.P50Ms), ("P95", frames?.P95Ms), ("P99", frames?.P99Ms),
         };
         int rowsX = landscape ? x : rect.X + 136;
-        int rowsY = landscape ? y + 68 : y + 12;
+        int rowsY = landscape ? y + 62 : y + 12;
         int rowsW = landscape ? 126 : rect.Right - 10 - rowsX;
         for (int i = 0; i < rows.Length; i++)
         {

@@ -9,7 +9,7 @@ public sealed class Config
     /// <summary>COM port; detected from the screen's USB identity when empty.</summary>
     public string? Port { get; set; }
 
-    public Orientation Orientation { get; set; } = Orientation.Landscape;
+    public Orientation Orientation { get; set; } = Orientation.ReverseLandscape;
 
     /// <summary>0 (darkest) to 100 (brightest).</summary>
     public int Brightness { get; set; } = 40;

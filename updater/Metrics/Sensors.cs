@@ -2,13 +2,17 @@ using LibreHardwareMonitor.Hardware;
 
 namespace ScreenUpdater.Metrics;
 
+public sealed record GpuSample(string Name, float? Load, float? Temp, float? Power, float? VramUsedMb);
+
 public sealed record HardwareSample(
     float? CpuLoad, float? CpuTemp, float? CpuPower,
-    string? GpuName, float? GpuLoad, float? GpuTemp, float? GpuPower, float? VramUsedMb, float? VramTotalMb,
+    IReadOnlyList<GpuSample> Gpus,
     float? MemLoad, float? MemUsedGb, float? MemTotalGb);
 
 public sealed class Sensors : IDisposable
 {
+    public const int GpuCount = 2;
+
     readonly Computer _computer = new()
     {
         IsCpuEnabled = true,
@@ -16,55 +20,64 @@ public sealed class Sensors : IDisposable
         IsMemoryEnabled = true,
     };
 
-    public Sensors() => _computer.Open();
+    readonly IHardware[] _gpus;
+
+    public Sensors()
+    {
+        _computer.Open();
+
+        // The adapters with the most dedicated memory, which leaves out integrated graphics.
+        _gpus = _computer.Hardware
+            .Where(h => h.HardwareType is HardwareType.GpuAmd or HardwareType.GpuNvidia or HardwareType.GpuIntel)
+            .Select(h =>
+            {
+                h.Update();
+                return (Hardware: h, Memory: Value(h, SensorType.SmallData, "GPU Memory Total", "D3D Dedicated Memory Total") ?? 0);
+            })
+            .OrderByDescending(g => g.Memory)
+            .Take(GpuCount)
+            .Select(g => g.Hardware)
+            .ToArray();
+    }
 
     public HardwareSample Sample()
     {
         float? cpuLoad = null, cpuTemp = null, cpuPower = null;
         float? memLoad = null, memUsed = null, memAvailable = null;
-        IHardware? gpu = null;
-        float gpuBest = -1;
 
         foreach (var hardware in _computer.Hardware)
         {
-            hardware.Update();
             switch (hardware.HardwareType)
             {
                 case HardwareType.Cpu:
+                    hardware.Update();
                     cpuLoad = Value(hardware, SensorType.Load, "CPU Total");
                     cpuTemp = Value(hardware, SensorType.Temperature, "Core (Tctl/Tdie)", "CPU Package", "Core Max");
                     cpuPower = Value(hardware, SensorType.Power, "Package", "CPU Package");
                     break;
-                case HardwareType.Memory when hardware.Name.Contains("Virtual", StringComparison.OrdinalIgnoreCase):
-                    break;
-                case HardwareType.Memory:
+                case HardwareType.Memory when !hardware.Name.Contains("Virtual", StringComparison.OrdinalIgnoreCase):
+                    hardware.Update();
                     memLoad = Value(hardware, SensorType.Load, "Memory");
                     memUsed = Value(hardware, SensorType.Data, "Memory Used");
                     memAvailable = Value(hardware, SensorType.Data, "Memory Available");
                     break;
-                case HardwareType.GpuAmd or HardwareType.GpuNvidia or HardwareType.GpuIntel:
-                    float load = GpuLoad(hardware) ?? 0;
-                    if (load > gpuBest)
-                    {
-                        gpuBest = load;
-                        gpu = hardware;
-                    }
-                    break;
             }
         }
 
-        return new HardwareSample(
-            cpuLoad, cpuTemp, cpuPower,
-            gpu?.Name,
-            gpu is null ? null : GpuLoad(gpu),
-            gpu is null ? null : Value(gpu, SensorType.Temperature, "GPU Core"),
-            gpu is null ? null : Value(gpu, SensorType.Power, "GPU Package", "GPU Core"),
-            gpu is null ? null : Value(gpu, SensorType.SmallData, "GPU Memory Used", "D3D Dedicated Memory Used"),
-            gpu is null ? null : Value(gpu, SensorType.SmallData, "GPU Memory Total"),
-            memLoad, memUsed, memUsed + memAvailable);
-    }
+        var gpus = new List<GpuSample>(_gpus.Length);
+        foreach (var gpu in _gpus)
+        {
+            gpu.Update();
+            gpus.Add(new GpuSample(
+                gpu.Name,
+                Value(gpu, SensorType.Load, "GPU Core", "D3D 3D"),
+                Value(gpu, SensorType.Temperature, "GPU Core"),
+                Value(gpu, SensorType.Power, "GPU Package", "GPU Core"),
+                Value(gpu, SensorType.SmallData, "GPU Memory Used", "D3D Dedicated Memory Used")));
+        }
 
-    static float? GpuLoad(IHardware gpu) => Value(gpu, SensorType.Load, "GPU Core", "D3D 3D");
+        return new HardwareSample(cpuLoad, cpuTemp, cpuPower, gpus, memLoad, memUsed, memUsed + memAvailable);
+    }
 
     static float? Value(IHardware hardware, SensorType type, params string[] names)
     {

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Drawing;
 using System.Drawing.Imaging;
 using ScreenUpdater;
 using ScreenUpdater.Lcd;
@@ -53,8 +54,18 @@ void Sample()
     state.Fps.Add((float?)state.Frames?.Fps);
     state.LowFps.Add(state.Frames is { } f ? (float)(1000 / f.P99Ms) : null);
     state.Cpu.Add(state.Hardware.CpuLoad);
-    state.Gpu.Add(state.Hardware.GpuLoad);
+    for (int i = 0; i < state.Gpus.Length; i++)
+        state.Gpus[i].Add(i < state.Hardware.Gpus.Count ? state.Hardware.Gpus[i].Load : null);
     state.Mem.Add(state.Hardware.MemLoad);
+}
+
+// Slow orbit within ±2 px, one step per minute.
+static Point PixelShift(TimeSpan elapsed)
+{
+    int step = (int)elapsed.TotalMinutes;
+    return new Point(
+        (int)Math.Round(2 * Math.Sin(2 * Math.PI * step / 16)),
+        (int)Math.Round(2 * Math.Sin(2 * Math.PI * step / 12)));
 }
 
 if (previewPath is not null)
@@ -65,7 +76,7 @@ if (previewPath is not null)
         Thread.Sleep(config.IntervalMs);
     }
     Sample();
-    dashboard.Render(state).Save(previewPath, ImageFormat.Png);
+    dashboard.Render(state, Point.Empty).Save(previewPath, ImageFormat.Png);
     return;
 }
 
@@ -109,7 +120,7 @@ while (true)
             if (screenOn)
             {
                 Sample();
-                dashboard.Render(state);
+                dashboard.Render(state, PixelShift(timer.Elapsed));
                 dashboard.CopyRgb565(current);
                 long drawStart = timer.ElapsedMilliseconds;
                 foreach (var rect in FrameDiffer.Diff(shown, current, width, height))
