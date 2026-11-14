@@ -9,9 +9,10 @@ public sealed record EngineLoad(string Type, int Index, float Load);
 
 /// <param name="Load">Busiest engine of the adapter, as Task Manager reports utilisation.</param>
 /// <param name="Engines">Utilisation per engine type of this adapter, in engine order.</param>
+/// <param name="PowerEstimated">The power figure is the adapter's power limit scaled by the share the display kernel reports.</param>
 public sealed record GpuSample(
-    string Name, float? Load, IReadOnlyList<EngineLoad> Engines, float? Temp, float? ClockMhz, float? PowerW,
-    float? VramUsedGb, float VramTotalGb);
+    string Name, float? Load, IReadOnlyList<EngineLoad> Engines, float? Temp, float? ClockMhz,
+    float? PowerW, bool PowerEstimated, float? VramUsedGb, float VramTotalGb);
 
 public sealed record HardwareSample(
     float CpuLoad, float CpuGhz, float? CpuTemp, float? CpuPower,
@@ -31,6 +32,7 @@ public sealed partial class Sensors : IDisposable
         public required string Name;
         public required string LuidKey;
         public required float TotalGb;
+        public float? PowerLimitW;
         public uint Handle;
     }
 
@@ -74,6 +76,10 @@ public sealed partial class Sensors : IDisposable
             }
         }
         _gpus = [.. gpus.OrderByDescending(g => g.TotalGb).Take(GpuCount)];
+        foreach (var (name, limit) in Nvml.ReadPowerLimits())
+        {
+            if (_gpus.FirstOrDefault(g => g.Name == name) is { } match) match.PowerLimitW = limit;
+        }
         foreach (var gpu in gpus.Except(_gpus)) Close(gpu);
     }
 
@@ -106,8 +112,11 @@ public sealed partial class Sensors : IDisposable
                     : new EngineLoad(type, int.Parse(index), clamped);
             }
             driver.TryGetValue(gpu.Name, out var reading);
+            var (temperature, powerShare) = ReadPerformance(gpu);
+            float? estimate = reading.PowerW is null ? gpu.PowerLimitW * powerShare : null;
             gpus.Add(new GpuSample(
-                gpu.Name, load, [.. engines.Values.OrderBy(e => e.Index)], ReadTemperature(gpu), reading.ClockMhz, reading.PowerW,
+                gpu.Name, load, [.. engines.Values.OrderBy(e => e.Index)], temperature, reading.ClockMhz,
+                reading.PowerW ?? estimate, estimate is not null,
                 dedicated.TryGetValue(gpu.LuidKey, out double bytes) ? (float)(bytes / 1073741824) : null,
                 gpu.TotalGb));
         }
@@ -142,9 +151,11 @@ public sealed partial class Sensors : IDisposable
             result[LuidKey(instance)] = value;
         return result;
     }
-    static float? ReadTemperature(Gpu gpu)
+
+    /// <summary>Temperature in °C and power draw as a fraction of the adapter's limit.</summary>
+    static (float? Temperature, float? PowerShare) ReadPerformance(Gpu gpu)
     {
-        if (gpu.Handle == 0) return null;
+        if (gpu.Handle == 0) return default;
 
         int size = Marshal.SizeOf<AdapterPerfData>();
         IntPtr buffer = Marshal.AllocHGlobal(size);
@@ -158,18 +169,19 @@ public sealed partial class Sensors : IDisposable
                 Data = buffer,
                 DataSize = (uint)size,
             };
-            if (D3DKMTQueryAdapterInfo(ref query) != 0) return null;
+            if (D3DKMTQueryAdapterInfo(ref query) != 0) return default;
 
-            // Deci-degrees Celsius; 0 when the driver does not report it.
-            uint temperature = Marshal.PtrToStructure<AdapterPerfData>(buffer).Temperature;
-            return temperature > 0 ? temperature / 10f : null;
+            // Temperature is in deci-degrees and power in tenths of a percent; 0 means not reported.
+            var data = Marshal.PtrToStructure<AdapterPerfData>(buffer);
+            return (
+                data.Temperature > 0 ? data.Temperature / 10f : null,
+                data.Power > 0 ? data.Power / 1000f : null);
         }
         finally
         {
             Marshal.FreeHGlobal(buffer);
         }
     }
-
     /// <summary>"luid_0x00000000_0x0001D52A_phys_0" → "0x00000000_0x0001D52A".</summary>
     static string LuidKey(string instanceName) => instanceName.Length >= 26 ? instanceName.Substring(5, 21) : instanceName;
 
