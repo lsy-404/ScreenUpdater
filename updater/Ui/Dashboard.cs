@@ -104,9 +104,9 @@ public sealed class Dashboard : IDisposable
     const int Pad = 6;
     const int TopY = 26;
     const int TopHeight = 112;
-    const int LeftWidth = 140;
+    const int LeftWidth = 124;
     const int FpsHeight = 68;
-    const int NetworkWidth = 110;
+    const int NetworkWidth = 92;
     const int EngineCharts = 4;
 
     readonly Bitmap _bitmap = new(Width, Height, PixelFormat.Format32bppArgb);
@@ -117,6 +117,7 @@ public sealed class Dashboard : IDisposable
     readonly Font _value = new("Segoe UI", 12, FontStyle.Bold, GraphicsUnit.Pixel);
     readonly Font _small = new("Segoe UI", 10, FontStyle.Regular, GraphicsUnit.Pixel);
     readonly Font _smallBold = new("Segoe UI", 10, FontStyle.Bold, GraphicsUnit.Pixel);
+    readonly Font _tiny = new("Segoe UI", 9, FontStyle.Regular, GraphicsUnit.Pixel);
 
     readonly SolidBrush _text = new(Text);
     readonly SolidBrush _muted = new(Muted);
@@ -216,8 +217,8 @@ public sealed class Dashboard : IDisposable
         for (int i = 0; i < rows.Length; i++)
         {
             int cx = x + i * third;
-            _g.DrawString(rows[i].Name, _small, _muted, cx, chart.Bottom + 4, _left);
-            _g.DrawString(rows[i].Ms is { } ms ? (1000 / ms).ToString("0") : "—", _smallBold, _text, cx + 20, chart.Bottom + 4, _left);
+            _g.DrawString(rows[i].Name, _tiny, _muted, cx, chart.Bottom + 5, _left);
+            _g.DrawString(rows[i].Ms is { } ms ? (1000 / ms).ToString("0") : "—", _smallBold, _text, cx + 16, chart.Bottom + 4, _left);
         }
     }
 
@@ -232,8 +233,8 @@ public sealed class Dashboard : IDisposable
         int w = (rect.Width - 16) / columns.Length;
         for (int i = 0; i < columns.Length; i++)
         {
-            _g.DrawString(columns[i].Name, _small, _muted, x + i * w, rect.Y + 4, _left);
-            _g.DrawString(columns[i].Value?.ToString() ?? "—", _value, _text, x + i * w, rect.Y + 17, _left);
+            _g.DrawString(columns[i].Name, _small, _muted, x + i * w, rect.Y + 5, _left);
+            _g.DrawString(columns[i].Value?.ToString() ?? "—", _smallBold, _text, x + i * w, rect.Y + 19, _left);
         }
     }
 
@@ -242,71 +243,81 @@ public sealed class Dashboard : IDisposable
         DrawCard(rect);
         var hw = state.Hardware;
         int x = rect.X + 8;
-        int y = rect.Y + 5;
+        int y = rect.Y + 4;
 
-        DrawLegend(x, y, CpuColor, "CPU", Percent(hw?.CpuLoad),
-            hw is null ? "" : Join($"{hw.CpuGhz:0.00}GHz", Unit(hw.CpuPower, "W"), Unit(hw.CpuTemp, "°C")));
-        DrawLegend(x, y + 15, MemColor, "内存", Percent(hw?.MemLoad),
-            hw is null ? "" : Join($"{hw.MemUsedGb:0.0}/{hw.MemTotalGb:0.0}G", Unit(state.System?.MemoryMhz, "MHz")));
+        using var cpu = new SolidBrush(CpuColor);
+        using var memory = new SolidBrush(MemColor);
+        float end = DrawInline(x, y,
+            ("CPU", _smallBold, cpu),
+            (Percent(hw?.CpuLoad), _smallBold, _text),
+            (hw is null ? "" : $"{hw.CpuGhz:0.00}GHz", _small, _muted),
+            (Unit(hw?.CpuPower, "W"), _small, _muted),
+            (Unit(hw?.CpuTemp, "°C"), _small, _muted));
+        DrawInline(end + 6, y,
+            ("内存", _smallBold, memory),
+            (Percent(hw?.MemLoad), _smallBold, _text),
+            (hw is null ? "" : $"{hw.MemUsedGb:0.0}G", _small, _muted),
+            (Unit(state.System?.MemoryMhz, "MHz"), _small, _muted));
 
-        var chart = Rectangle.FromLTRB(x, y + 35, rect.Right - 8, rect.Bottom - 10);
+        var chart = Rectangle.FromLTRB(x, y + 17, rect.Right - 8, rect.Bottom - 10);
         DrawAxes(chart, hw?.MemTotalGb);
         DrawSeries(chart, state.Mem, 100, MemColor);
         DrawSeries(chart, state.Cpu, 100, CpuColor, fill: true);
         DrawTimeAxis(chart);
     }
 
+    /// <summary>Upload rises from the centre line and download hangs below it, on a shared scale.</summary>
     void DrawNetworkCard(Rectangle rect, DashboardState state)
     {
         DrawCard(rect);
         int x = rect.X + 8;
-        int y = rect.Y + 5;
         int w = rect.Width - 16;
 
-        DrawSpeed(x, y, w, "↓", DownColor, state.System?.DownloadBps);
-        DrawSpeed(x, y + 15, w, "↑", UpColor, state.System?.UploadBps);
+        DrawSpeed(x, rect.Y + 4, w, "↑", UpColor, state.System?.UploadBps);
+        DrawSpeed(x, rect.Bottom - 18, w, "↓", DownColor, state.System?.DownloadBps);
 
-        var chart = Rectangle.FromLTRB(x, y + 46, rect.Right - 8, rect.Bottom - 8);
-        float max = MathF.Max(MathF.Max(state.Download.Max(), state.Upload.Max()), 102400);
-        var (scale, unit) = Speed(max);
-        _g.DrawString($"{scale} {unit}", _small, _muted, new RectangleF(x, chart.Y - 13, w, 12), _right);
+        var chart = Rectangle.FromLTRB(x, rect.Y + 21, rect.Right - 8, rect.Bottom - 21);
+        var upper = chart with { Height = chart.Height / 2 };
+        var lower = Rectangle.FromLTRB(chart.X, upper.Bottom, chart.Right, chart.Bottom);
         DrawGrid(chart);
-        DrawSeries(chart, state.Upload, max, UpColor);
-        DrawSeries(chart, state.Download, max, DownColor, fill: true);
+
+        float max = MathF.Max(MathF.Max(state.Download.Max(), state.Upload.Max()), 102400);
+        DrawSeries(upper, state.Upload, max, UpColor, fill: true);
+        DrawSeries(lower, state.Download, max, DownColor, fill: true, downward: true);
+
+        var (scale, unit) = Speed(max);
+        _g.DrawString($"{scale} {unit}", _small, _muted, new RectangleF(x, chart.Y + 1, w - 1, 12), _right);
     }
 
     void DrawSpeed(int x, int y, int width, string arrow, Color color, double? bytesPerSecond)
     {
         using (var brush = new SolidBrush(color))
-            _g.DrawString(arrow, _value, brush, x, y, _left);
+            _g.DrawString(arrow, _value, brush, x, y - 1, _left);
         if (bytesPerSecond is not { } bps) return;
 
         var (value, unit) = Speed(bps);
         _g.DrawString(unit, _small, _muted, new RectangleF(x, y + 2, width, 12), _right);
-        _g.DrawString(value, _value, _text, new RectangleF(x, y, width - 27, 16), _right);
+        _g.DrawString(value, _value, _text, new RectangleF(x, y, width - 25, 16), _right);
     }
 
     void DrawGpuCard(Rectangle rect, GpuSample? gpu, Color color, GpuState state)
     {
         DrawCard(rect);
         int x = rect.X + 10;
-        int y = rect.Y + 5;
+        int y = rect.Y + 4;
         int w = rect.Width - 20;
 
-        float nameEnd = DrawLegend(x, y, color, ShortGpuName(gpu?.Name), Percent(gpu?.Load), "");
-        if (gpu?.Temp is { } temp)
-            _g.DrawString($"{temp:0}°C", _value, _text, new RectangleF(nameEnd, y, rect.Right - 10 - nameEnd, 16), _right);
+        using var name = new SolidBrush(color);
+        using var memory = new SolidBrush(MemColor);
+        DrawInline(x, y,
+            (ShortGpuName(gpu?.Name), _smallBold, name),
+            (Percent(gpu?.Load), _smallBold, _text),
+            (Unit(gpu?.Temp, "°C"), _smallBold, _text),
+            (gpu?.VramUsedGb is { } used ? $"{used:0.0}/{gpu.VramTotalGb:0.0}G" : "", _small, memory),
+            (Unit(gpu?.PowerW, "W"), _small, _muted),
+            (gpu?.ClockMhz is { } clock ? $"{clock / 1000:0.00}GHz" : "", _small, _muted));
 
-        if (gpu is not null)
-        {
-            var detail = Join(
-                gpu.VramUsedGb is { } used ? $"显存 {used:0.0}/{gpu.VramTotalGb:0.0}G" : "",
-                Unit(gpu.PowerW, "W"),
-                gpu.ClockMhz is { } clock ? $"{clock / 1000:0.00}GHz" : "");
-            _g.DrawString(detail, _small, _muted, new RectangleF(x, y + 17, w, 14), _left);
-        }
-
-        var chart = new Rectangle(x, y + 32, w, 46);
+        var chart = new Rectangle(x, y + 17, w, 62);
         DrawAxes(chart, gpu?.VramTotalGb);
         DrawSeries(chart, state.Memory, 100, MemColor);
         DrawSeries(chart, state.Load, 100, color, fill: true);
@@ -336,7 +347,6 @@ public sealed class Dashboard : IDisposable
             DrawSeries(engineChart, track.History, 100, color, fill: true);
         }
     }
-
     /// <summary>Grid with utilisation labels on the left axis and memory in GB on the right axis.</summary>
     void DrawAxes(Rectangle chart, float? memoryTotalGb)
     {
@@ -363,23 +373,18 @@ public sealed class Dashboard : IDisposable
             _g.DrawLine(pen, x, chart.Bottom + 1, x, chart.Bottom + 4);
         }
     }
-    /// <summary>Swatch, name, bold value and muted detail on one line; returns the x after it.</summary>
-    float DrawLegend(float x, int y, Color color, string name, string value, string detail)
+
+    /// <summary>Draws text pieces left to right on one line, skipping empty ones; returns the x after the last.</summary>
+    float DrawInline(float x, int y, params (string Text, Font Font, Brush Brush)[] parts)
     {
-        using (var swatch = new SolidBrush(color))
-            _g.FillRectangle(swatch, x, y + 4, 8, 8);
-        x += 13;
-        _g.DrawString(name, _label, _text, x, y, _left);
-        x += _g.MeasureString(name, _label, 200, _left).Width + 5;
-        _g.DrawString(value, _value, _text, x, y, _left);
-        x += _g.MeasureString(value, _value, 200, _left).Width;
-        if (detail.Length == 0) return x;
-
-        x += 5;
-        _g.DrawString(detail, _small, _muted, x, y + 2, _left);
-        return x + _g.MeasureString(detail, _small, 300, _left).Width;
+        foreach (var (text, font, brush) in parts)
+        {
+            if (text.Length == 0) continue;
+            _g.DrawString(text, font, brush, x, y, _left);
+            x += _g.MeasureString(text, font, 300, _left).Width + 4;
+        }
+        return x;
     }
-
     void DrawCard(Rectangle rect)
     {
         using var fill = new SolidBrush(Card);
@@ -400,13 +405,15 @@ public sealed class Dashboard : IDisposable
     }
 
     /// <summary>Plots a series against an axis running from 0 to <paramref name="max"/>.</summary>
-    void DrawSeries(Rectangle chart, History history, float max, Color color, bool fill = false)
+    /// <param name="downward">Measure from the top edge down instead of from the bottom edge up.</param>
+    void DrawSeries(Rectangle chart, History history, float max, Color color, bool fill = false, bool downward = false)
     {
         _g.SmoothingMode = SmoothingMode.AntiAlias;
         using var pen = new Pen(color, 1.4f) { LineJoin = LineJoin.Round };
         using var area = new SolidBrush(Color.FromArgb(40, color));
 
         float step = (float)chart.Width / (history.Capacity - 1);
+        int baseline = downward ? chart.Y : chart.Bottom;
         var run = new List<PointF>();
 
         void Flush()
@@ -415,7 +422,7 @@ public sealed class Dashboard : IDisposable
             {
                 if (fill)
                 {
-                    PointF[] polygon = [.. run, new(run[^1].X, chart.Bottom), new(run[0].X, chart.Bottom)];
+                    PointF[] polygon = [.. run, new(run[^1].X, baseline), new(run[0].X, baseline)];
                     _g.FillPolygon(area, polygon);
                 }
                 _g.DrawLines(pen, run.ToArray());
@@ -432,7 +439,8 @@ public sealed class Dashboard : IDisposable
                 continue;
             }
             float ratio = Math.Clamp(v / max, 0, 1);
-            run.Add(new PointF(chart.X + i * step, chart.Bottom - ratio * chart.Height));
+            float offset = ratio * chart.Height;
+            run.Add(new PointF(chart.X + i * step, downward ? baseline + offset : baseline - offset));
         }
         Flush();
         _g.SmoothingMode = SmoothingMode.None;
@@ -445,8 +453,6 @@ public sealed class Dashboard : IDisposable
     static string Percent(float? value) => value is { } v ? $"{v:0}%" : "—";
 
     static string Unit(float? value, string unit) => value is { } v ? $"{v:0}{unit}" : "";
-
-    static string Join(params string[] parts) => string.Join(" · ", parts.Where(p => p.Length > 0));
 
     static string ShortGpuName(string? name)
     {
@@ -491,6 +497,7 @@ public sealed class Dashboard : IDisposable
         _value.Dispose();
         _small.Dispose();
         _smallBold.Dispose();
+        _tiny.Dispose();
         _text.Dispose();
         _muted.Dispose();
         _left.Dispose();

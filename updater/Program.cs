@@ -35,6 +35,7 @@ if (!first && previewPath is null) return;
 var config = Config.Load(baseDirectory);
 const int width = TuringLcd.Width;
 const int height = TuringLcd.Height;
+const int ScrubHeight = 16;
 
 using var frames = new FrameMonitor(
     config.PresentMonPath, baseDirectory, previewPath is null ? "ScreenUpdater" : "ScreenUpdaterPreview", Log);
@@ -53,7 +54,7 @@ void Sample()
     state.FramesAvailable = frames.Available;
     state.Frames = foreground is { } fg ? frames.GetStats(fg.ProcessId, fg.Name) : null;
     state.Weather = weather?.Latest;
-    state.Fps.Add((float?)state.Frames?.Fps);
+    state.Fps.Add(state.FramesAvailable ? (float)(state.Frames?.Fps ?? 0) : null);
 
     var stats = state.System = system.Sample();
     state.Download.Add((float)stats.DownloadBps);
@@ -102,6 +103,7 @@ while (true)
         Log($"connected on {portName}");
 
         ushort[]? shown = null;
+        int scrubBand = 0;
         bool screenOn = true;
 
         while (true)
@@ -132,7 +134,16 @@ while (true)
                 long drawStart = timer.ElapsedMilliseconds;
                 foreach (var rect in FrameDiffer.Diff(shown, current, width, height))
                     lcd.DrawRegion(current, rect.X, rect.Y, rect.Width, rect.Height);
-                if (shown is null) Log($"full frame sent in {timer.ElapsedMilliseconds - drawStart} ms");
+                if (shown is null)
+                {
+                    Log($"full frame sent in {timer.ElapsedMilliseconds - drawStart} ms");
+                }
+                else
+                {
+                    // Re-send one band per tick so anything the screen dropped in transit is repaired.
+                    lcd.DrawRegion(current, 0, scrubBand * ScrubHeight, width, ScrubHeight);
+                    scrubBand = (scrubBand + 1) % (height / ScrubHeight);
+                }
                 shown ??= new ushort[current.Length];
                 current.CopyTo(shown, 0);
             }
