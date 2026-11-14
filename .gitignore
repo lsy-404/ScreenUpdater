@@ -1,9 +1,4 @@
-# Vendor software, themes and logs stay local
-/*
-!/.gitignore
-!/updater/
-
-/updater/bin/
-/updater/obj/
+bin/
+obj/
 /updater/dist/
 /updater/tools/

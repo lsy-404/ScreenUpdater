@@ -1,6 +1,6 @@
 <#
-  Publishes ScreenUpdater and registers it as an elevated logon task,
-  replacing the vendor UsbMonitor task. Run from an elevated PowerShell.
+  Publishes ScreenUpdater and registers it as an elevated logon task.
+  Run from an elevated PowerShell.
 #>
 #Requires -RunAsAdministrator
 $ErrorActionPreference = 'Stop'
@@ -13,12 +13,6 @@ if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
     Stop-ScheduledTask -TaskName $taskName
 }
 Get-Process ScreenUpdater -ErrorAction SilentlyContinue | Stop-Process -Force
-
-if (Get-ScheduledTask -TaskName UsbMonitor -ErrorAction SilentlyContinue) {
-    Stop-ScheduledTask -TaskName UsbMonitor
-    Disable-ScheduledTask -TaskName UsbMonitor | Out-Null
-}
-Get-Process UsbMonitor -ErrorAction SilentlyContinue | Stop-Process -Force
 
 dotnet publish (Join-Path $PSScriptRoot 'ScreenUpdater.csproj') -c Release -o $dist --nologo
 if ($LASTEXITCODE -ne 0) { throw 'publish failed' }

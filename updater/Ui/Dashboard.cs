@@ -249,11 +249,11 @@ public sealed class Dashboard : IDisposable
         DrawLegend(x, y + 15, MemColor, "内存", Percent(hw?.MemLoad),
             hw is null ? "" : Join($"{hw.MemUsedGb:0.0}/{hw.MemTotalGb:0.0}G", Unit(state.System?.MemoryMhz, "MHz")));
 
-        var chart = Rectangle.FromLTRB(x, y + 35, rect.Right - 8, rect.Bottom - 19);
+        var chart = Rectangle.FromLTRB(x, y + 35, rect.Right - 8, rect.Bottom - 10);
         DrawAxes(chart, hw?.MemTotalGb);
-        DrawSeries(chart, state.Mem, 100, MemColor, dashed: true);
+        DrawSeries(chart, state.Mem, 100, MemColor);
         DrawSeries(chart, state.Cpu, 100, CpuColor, fill: true);
-        DrawTimeAxis(chart, ["-2m", "-1m", "现在"]);
+        DrawTimeAxis(chart);
     }
 
     void DrawNetworkCard(Rectangle rect, DashboardState state)
@@ -306,11 +306,11 @@ public sealed class Dashboard : IDisposable
             _g.DrawString(detail, _small, _muted, new RectangleF(x, y + 17, w, 14), _left);
         }
 
-        var chart = new Rectangle(x, y + 32, w, 40);
+        var chart = new Rectangle(x, y + 32, w, 46);
         DrawAxes(chart, gpu?.VramTotalGb);
-        DrawSeries(chart, state.Memory, 100, MemColor, dashed: true);
+        DrawSeries(chart, state.Memory, 100, MemColor);
         DrawSeries(chart, state.Load, 100, color, fill: true);
-        DrawTimeAxis(chart, ["-2m", "-1m", "现在"]);
+        DrawTimeAxis(chart);
 
         // The most used engine types, kept in the adapter's own order so cells do not jump around.
         var engines = state.Engines
@@ -320,7 +320,7 @@ public sealed class Dashboard : IDisposable
             .ToList();
 
         const int gap = 6;
-        int top = chart.Bottom + 16;
+        int top = chart.Bottom + 9;
         int cellW = (w - gap) / 2;
         int cellH = (rect.Bottom - 6 - top - 3) / 2;
         for (int i = 0; i < engines.Count; i++)
@@ -352,21 +352,17 @@ public sealed class Dashboard : IDisposable
         }
     }
 
-    /// <summary>Evenly spaced ticks below the chart, newest sample on the right.</summary>
-    void DrawTimeAxis(Rectangle chart, string[] labels)
+    /// <summary>A tick below the chart every 30 seconds.</summary>
+    void DrawTimeAxis(Rectangle chart)
     {
-        using var pen = new Pen(Grid);
-        for (int i = 0; i < labels.Length; i++)
+        using var pen = new Pen(Muted);
+        const int intervals = DashboardState.HistoryLength / 30;
+        for (int i = 0; i <= intervals; i++)
         {
-            int x = chart.X + chart.Width * i / (labels.Length - 1);
-            _g.DrawLine(pen, x, chart.Bottom, x, chart.Bottom + 3);
-
-            var format = i == 0 ? _left : i == labels.Length - 1 ? _right : _center;
-            float left = i == 0 ? x : i == labels.Length - 1 ? x - 40 : x - 20;
-            _g.DrawString(labels[i], _small, _muted, new RectangleF(left, chart.Bottom + 3, 40, 12), format);
+            int x = chart.X + chart.Width * i / intervals;
+            _g.DrawLine(pen, x, chart.Bottom + 1, x, chart.Bottom + 4);
         }
     }
-
     /// <summary>Swatch, name, bold value and muted detail on one line; returns the x after it.</summary>
     float DrawLegend(float x, int y, Color color, string name, string value, string detail)
     {
@@ -404,11 +400,10 @@ public sealed class Dashboard : IDisposable
     }
 
     /// <summary>Plots a series against an axis running from 0 to <paramref name="max"/>.</summary>
-    void DrawSeries(Rectangle chart, History history, float max, Color color, bool dashed = false, bool fill = false)
+    void DrawSeries(Rectangle chart, History history, float max, Color color, bool fill = false)
     {
         _g.SmoothingMode = SmoothingMode.AntiAlias;
         using var pen = new Pen(color, 1.4f) { LineJoin = LineJoin.Round };
-        if (dashed) pen.DashPattern = [3, 3];
         using var area = new SolidBrush(Color.FromArgb(40, color));
 
         float step = (float)chart.Width / (history.Capacity - 1);
