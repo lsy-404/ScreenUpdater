@@ -117,6 +117,7 @@ public sealed class Dashboard : IDisposable
     readonly Font _value = new("Segoe UI", 12, FontStyle.Bold, GraphicsUnit.Pixel);
     readonly Font _small = new("Segoe UI", 10, FontStyle.Regular, GraphicsUnit.Pixel);
     readonly Font _smallBold = new("Segoe UI", 10, FontStyle.Bold, GraphicsUnit.Pixel);
+    readonly Font _number = new("Segoe UI", 11, FontStyle.Bold, GraphicsUnit.Pixel);
     readonly Font _tiny = new("Segoe UI", 9, FontStyle.Regular, GraphicsUnit.Pixel);
 
     readonly SolidBrush _text = new(Text);
@@ -248,15 +249,15 @@ public sealed class Dashboard : IDisposable
         using var cpu = new SolidBrush(CpuColor);
         using var memory = new SolidBrush(MemColor);
         float end = DrawInline(x, y,
-            ("CPU", "CPU", _smallBold, cpu),
-            (Percent(hw?.CpuLoad), "100%", _smallBold, _text),
-            (hw is null ? "" : $"{hw.CpuGhz:0.00}GHz", "0.00GHz", _tiny, _muted),
-            (Unit(hw?.CpuPower, "W"), "000W", _tiny, _muted),
-            (Unit(hw?.CpuTemp, "°C"), "00°C", _tiny, _muted));
-        DrawInline(end + 4, y,
-            ("内存", "内存", _smallBold, memory),
-            (Percent(hw?.MemLoad), "100%", _smallBold, _text),
-            (hw is null ? "" : $"{hw.MemUsedGb:0.0}G", "00.0G", _tiny, _muted));
+            ("CPU", "", "CPU", _smallBold, cpu),
+            (Number(hw?.CpuLoad), "%", "100", _number, _text),
+            (Number(hw?.CpuGhz, "0.00"), "GHz", "0.00", _number, _text),
+            (Number(hw?.CpuPower), "W", "000", _number, _text),
+            (Number(hw?.CpuTemp), "°C", "00", _number, _text));
+        DrawInline(end + 2, y,
+            ("内存", "", "内存", _smallBold, memory),
+            (Number(hw?.MemLoad), "%", "100", _number, _text),
+            (Number(hw?.MemUsedGb, "0.0"), "G", "00.0", _number, _text));
         var chart = Rectangle.FromLTRB(x, y + 17, rect.Right - 8, rect.Bottom - 10);
         DrawAxes(chart, hw?.MemTotalGb, Unit(state.System?.MemoryMhz, "MHz"));
         DrawSeries(chart, state.Mem, 100, MemColor);
@@ -306,12 +307,12 @@ public sealed class Dashboard : IDisposable
         using var memory = new SolidBrush(MemColor);
         var title = ShortGpuName(gpu?.Name);
         DrawInline(x, y,
-            (title, title, _smallBold, name),
-            (Percent(gpu?.Load), "100%", _smallBold, _text),
-            (Unit(gpu?.Temp, "°C"), "00°C", _smallBold, _text),
-            (gpu?.VramUsedGb is { } used ? $"{used:0.0}G" : "", "00.0G", _tiny, memory),
-            (gpu?.PowerW is { } power ? $"{(gpu.PowerEstimated ? "≈" : "")}{power:0}W" : "", "≈000W", _tiny, _muted),
-            (gpu?.ClockMhz is { } clock ? $"{clock / 1000:0.00}GHz" : "", "0.00GHz", _tiny, _muted));
+            (title, "", title, _smallBold, name),
+            (Number(gpu?.Load), "%", "100", _number, _text),
+            (Number(gpu?.Temp), "°C", "00", _number, _text),
+            (Number(gpu?.VramUsedGb, "0.0"), "G", "00.0", _number, memory),
+            (Number(gpu?.PowerW), "W", "000", _number, _text),
+            (Number(gpu?.ClockMhz / 1000, "0.00"), "GHz", "0.00", _number, _text));
         var chart = new Rectangle(x, y + 17, w, 62);
         DrawAxes(chart, gpu?.VramTotalGb, "");
         DrawSeries(chart, state.Memory, 100, MemColor);
@@ -370,15 +371,20 @@ public sealed class Dashboard : IDisposable
     }
 
     /// <summary>
-    /// Draws text pieces left to right on one line. Each piece owns a slot as wide as its widest
-    /// expected text, so pieces stay put while their values change. Returns the x after the last slot.
+    /// Draws pieces left to right on one line: a value followed by its unit in a smaller, lighter face.
+    /// Each piece owns a slot as wide as its widest expected value, so pieces stay put while values change.
+    /// Returns the x after the last slot.
     /// </summary>
-    float DrawInline(float x, int y, params (string Text, string Widest, Font Font, Brush Brush)[] parts)
+    float DrawInline(float x, int y, params (string Text, string Unit, string Widest, Font Font, Brush Brush)[] parts)
     {
-        foreach (var (text, widest, font, brush) in parts)
+        foreach (var (text, unit, widest, font, brush) in parts)
         {
-            _g.DrawString(text, font, brush, x, font == _tiny ? y + 1 : y, _left);
-            x += _g.MeasureString(widest, font, 300, _left).Width + 4;
+            _g.DrawString(text, font, brush, x, font == _number ? y - 1 : y, _left);
+            if (text.Length > 0 && unit.Length > 0)
+                _g.DrawString(unit, _tiny, _muted, x + _g.MeasureString(text, font, 300, _left).Width, y + 1, _left);
+
+            x += _g.MeasureString(widest, font, 300, _left).Width + 3;
+            if (unit.Length > 0) x += _g.MeasureString(unit, _tiny, 300, _left).Width;
         }
         return x;
     }
@@ -453,6 +459,8 @@ public sealed class Dashboard : IDisposable
 
     static string Percent(float? value) => value is { } v ? $"{v:0}%" : "—";
 
+    static string Number(float? value, string format = "0") => value?.ToString(format) ?? "";
+
     static string Unit(float? value, string unit) => value is { } v ? $"{v:0}{unit}" : "";
 
     static string ShortGpuName(string? name)
@@ -498,6 +506,7 @@ public sealed class Dashboard : IDisposable
         _value.Dispose();
         _small.Dispose();
         _smallBold.Dispose();
+        _number.Dispose();
         _tiny.Dispose();
         _text.Dispose();
         _muted.Dispose();

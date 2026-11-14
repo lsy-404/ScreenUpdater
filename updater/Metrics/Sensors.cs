@@ -9,10 +9,10 @@ public sealed record EngineLoad(string Type, int Index, float Load);
 
 /// <param name="Load">Busiest engine of the adapter, as Task Manager reports utilisation.</param>
 /// <param name="Engines">Utilisation per engine type of this adapter, in engine order.</param>
-/// <param name="PowerEstimated">The power figure is the adapter's power limit scaled by the share the display kernel reports.</param>
+/// <param name="PowerW">Measured by the driver, or else the adapter's power limit scaled by the share the display kernel reports.</param>
 public sealed record GpuSample(
     string Name, float? Load, IReadOnlyList<EngineLoad> Engines, float? Temp, float? ClockMhz,
-    float? PowerW, bool PowerEstimated, float? VramUsedGb, float VramTotalGb);
+    float? PowerW, float? VramUsedGb, float VramTotalGb);
 
 public sealed record HardwareSample(
     float CpuLoad, float CpuGhz, float? CpuTemp, float? CpuPower,
@@ -113,10 +113,9 @@ public sealed partial class Sensors : IDisposable
             }
             driver.TryGetValue(gpu.Name, out var reading);
             var (temperature, powerShare) = ReadPerformance(gpu);
-            float? estimate = reading.PowerW is null ? gpu.PowerLimitW * powerShare : null;
             gpus.Add(new GpuSample(
                 gpu.Name, load, [.. engines.Values.OrderBy(e => e.Index)], temperature, reading.ClockMhz,
-                reading.PowerW ?? estimate, estimate is not null,
+                reading.PowerW ?? gpu.PowerLimitW * powerShare,
                 dedicated.TryGetValue(gpu.LuidKey, out double bytes) ? (float)(bytes / 1073741824) : null,
                 gpu.TotalGb));
         }
