@@ -221,7 +221,7 @@ public sealed class Dashboard : IDisposable
         const int unitSlot = 9;
         x = DrawInline(x, y, (label, "", "W", _small, _muted));
         float width = _g.MeasureString("000.00", _number, 300, _left).Width;
-        _g.DrawString(rate.Value, _number, _text, x, y - 1, _left);
+        _g.DrawString(rate.Value, _number, _text, new RectangleF(x - 20, y - 1, width + 20, 14), _right);
         if (rate.Value.Length > 0)
             _g.DrawString(rate.Unit, _tiny, _muted, new RectangleF(x + width + unitGap, y + 1, unitSlot, 12), _center);
         return x + width + unitGap + unitSlot;
@@ -525,8 +525,8 @@ public sealed class Dashboard : IDisposable
     static (string Value, string Unit) Rate(double? bytesPerSecond) => bytesPerSecond switch
     {
         null => ("", "M"),
-        >= 1024000 => ((bytesPerSecond.Value / 1048576).ToString("000.00"), "M"),
-        _ => ((bytesPerSecond.Value / 1024).ToString("000.00"), "K"),
+        >= 1024000 => ((bytesPerSecond.Value / 1048576).ToString("0.00"), "M"),
+        _ => ((bytesPerSecond.Value / 1024).ToString("0.00"), "K"),
     };
 
     static string Percent(float? value) => value is { } v ? $"{v:0}%" : "—";
