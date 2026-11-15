@@ -101,7 +101,7 @@ public sealed class Dashboard : IDisposable
     static readonly Color UpColor = Color.FromArgb(0xff, 0x99, 0xa4);
     static readonly Color DiskColor = Color.FromArgb(0xf0, 0xa5, 0x60);
     static readonly Color GpuColor =Color.FromArgb(0x5f, 0xd0, 0xb8);
-    static readonly Color AmdColor = Color.FromArgb(0xed, 0x1c, 0x24);
+    static readonly Color AmdColor = Color.FromArgb(0xff, 0x5c, 0x5c);
     static readonly Color NvidiaColor = Color.FromArgb(0x76, 0xb9, 0x00);
     static readonly Color IntelColor = Color.FromArgb(0x00, 0x9f, 0xe3);
 
@@ -210,12 +210,21 @@ public sealed class Dashboard : IDisposable
         var read = Rate(system?.DiskReadBps);
         var write = Rate(system?.DiskWriteBps);
         x = DrawInline(bar.Right + 2, y, (Number(share * 100), "%", "100", _number, _muted));
-        // "K" and "M" differ in width, so the second rate is placed by the wider one.
-        float rateWidth = _g.MeasureString("W", _small, 300, _left).Width + 3
-            + _g.MeasureString("000.00", _number, 300, _left).Width
-            + _g.MeasureString("M", _tiny, 300, _left).Width + 3;
-        DrawInline(x + 5, y, ("R", "", "R", _small, _muted), (read.Value, read.Unit, "000.00", _number, _muted));
-        DrawInline(x + 5 + rateWidth + 5, y, ("W", "", "W", _small, _muted), (write.Value, write.Unit, "000.00", _number, _muted));
+        x = DrawRate(x + 5, y, "R", read);
+        DrawRate(x + 9, y, "W", write);
+    }
+
+    /// <summary>A label, a value of constant width, and the unit centred in a slot of its own.</summary>
+    float DrawRate(float x, int y, string label, (string Value, string Unit) rate)
+    {
+        const int unitGap = 3;
+        const int unitSlot = 9;
+        x = DrawInline(x, y, (label, "", "W", _small, _muted));
+        float width = _g.MeasureString("000.00", _number, 300, _left).Width;
+        _g.DrawString(rate.Value, _number, _text, x, y - 1, _left);
+        if (rate.Value.Length > 0)
+            _g.DrawString(rate.Unit, _tiny, _muted, new RectangleF(x + width + unitGap, y + 1, unitSlot, 12), _center);
+        return x + width + unitGap + unitSlot;
     }
 
     /// <summary>Frame rate of the foreground application: history on top, percentiles underneath.</summary>
@@ -516,8 +525,8 @@ public sealed class Dashboard : IDisposable
     static (string Value, string Unit) Rate(double? bytesPerSecond) => bytesPerSecond switch
     {
         null => ("", "M"),
-        >= 1024000 =>((bytesPerSecond.Value / 1048576).ToString("0.00"), "M"),
-        _ => ((bytesPerSecond.Value / 1024).ToString("0.00"), "K"),
+        >= 1024000 => ((bytesPerSecond.Value / 1048576).ToString("000.00"), "M"),
+        _ => ((bytesPerSecond.Value / 1024).ToString("000.00"), "K"),
     };
 
     static string Percent(float? value) => value is { } v ? $"{v:0}%" : "—";
