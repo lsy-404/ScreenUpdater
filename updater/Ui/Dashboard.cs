@@ -209,12 +209,9 @@ public sealed class Dashboard : IDisposable
 
         var read = Rate(system?.DiskReadBps);
         var write = Rate(system?.DiskWriteBps);
-        DrawInline(bar.Right + 4, y,
-            (Number(share * 100), "%", "100", _number, _muted),
-            ("读", "", "读", _small, _muted),
-            (read.Value, read.Unit, "000.00", _number, _muted),
-            ("写", "", "写", _small, _muted),
-            (write.Value, write.Unit, "000.00", _number, _muted));
+        x = DrawInline(bar.Right + 2, y, (Number(share * 100), "%", "100", _number, _muted));
+        x = DrawInline(x + 5, y, ("R", "", "R", _small, _muted), (read.Value, read.Unit, "000.00", _number, _muted));
+        DrawInline(x + 5, y, ("W", "", "W", _small, _muted), (write.Value, write.Unit, "000.00", _number, _muted));
     }
 
     /// <summary>Frame rate of the foreground application: history on top, percentiles underneath.</summary>
@@ -426,12 +423,19 @@ public sealed class Dashboard : IDisposable
     {
         foreach (var (text, unit, widest, font, brush) in parts)
         {
-            _g.DrawString(text, font, unit.Length > 0 ? _text : brush, x, font == _number ? y - 1 : y, _left);
-            if (text.Length > 0 && unit.Length > 0)
-                _g.DrawString(unit, _tiny, brush, x + _g.MeasureString(text, font, 300, _left).Width, y + 1, _left);
-
-            x += _g.MeasureString(widest, font, 300, _left).Width + 3;
-            if (unit.Length > 0) x += _g.MeasureString(unit, _tiny, 300, _left).Width;
+            float slot = _g.MeasureString(widest, font, 300, _left).Width;
+            if (unit.Length == 0)
+            {
+                _g.DrawString(text, font, brush, x, y, _left);
+            }
+            else
+            {
+                // Right-aligned against the unit, which keeps both in place whatever the digit count.
+                _g.DrawString(text, font, _text, new RectangleF(x - 20, y - 1, slot + 20, 14), _right);
+                if (text.Length > 0) _g.DrawString(unit, _tiny, brush, x + slot, y + 1, _left);
+                x += _g.MeasureString(unit, _tiny, 300, _left).Width;
+            }
+            x += slot + 3;
         }
         return x;
     }
@@ -507,8 +511,8 @@ public sealed class Dashboard : IDisposable
     /// <summary>Throughput in megabytes per second, or kilobytes below one megabyte.</summary>
     static (string Value, string Unit) Rate(double? bytesPerSecond) => bytesPerSecond switch
     {
-        null => ("", "K"),
-        >= 1048576 => ((bytesPerSecond.Value / 1048576).ToString("0.00"), "M"),
+        null => ("", "M"),
+        >= 1024000 =>((bytesPerSecond.Value / 1048576).ToString("0.00"), "M"),
         _ => ((bytesPerSecond.Value / 1024).ToString("0.00"), "K"),
     };
 
