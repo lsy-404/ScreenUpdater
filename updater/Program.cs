@@ -53,6 +53,7 @@ void Sample()
     var foreground = ForegroundApp.Get();
     state.FramesAvailable = frames.Available;
     state.Frames = foreground is { } fg ? frames.GetStats(fg.ProcessId, fg.Name) : null;
+    state.FramesSupported = foreground is { } app && frames.HasPresented(app.Name);
     state.Weather = weather?.Latest;
     state.Fps.Add(state.FramesAvailable ? (float)(state.Frames?.Fps ?? 0) : null);
 

@@ -21,6 +21,7 @@ public sealed class FrameMonitor : IDisposable
     readonly object _lock = new();
     // One entry per swap chain: a process with several windows presents on each independently.
     readonly Dictionary<(int ProcessId, string SwapChain), ProcessFrames> _processes = [];
+    readonly HashSet<string> _presented = new(StringComparer.OrdinalIgnoreCase);
     readonly Stopwatch _clock = Stopwatch.StartNew();
     readonly ChildProcessJob _job = new();
     readonly Action<string> _log;
@@ -158,11 +159,20 @@ public sealed class FrameMonitor : IDisposable
                 _latestArrival = arrival;
                 var key = (pid, chainCol >= 0 ? fields[chainCol] : "");
                 if (!_processes.TryGetValue(key, out var frames))
+                {
                     _processes[key] = frames = new ProcessFrames { Application = fields[appCol] };
+                    _presented.Add(fields[appCol]);
+                }
                 frames.Frames.Enqueue((time, ms));
             }
         }
     }
+    /// <summary>Whether the executable has presented at any point; an idle window presents nothing.</summary>
+    public bool HasPresented(string processName)
+    {
+        lock (_lock) return _presented.Contains(processName + ".exe");
+    }
+
     /// <summary>
     /// Statistics for the busiest swap chain of a process. Falls back to the busiest one of any process
     /// with the same executable name, which covers applications that present from a helper process.

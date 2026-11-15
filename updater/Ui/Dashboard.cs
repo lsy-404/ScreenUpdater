@@ -69,6 +69,9 @@ public sealed class DashboardState
     public const int HistoryLength = 120;
 
     public bool FramesAvailable;
+
+    /// <summary>The foreground application has presented before, so no frames means it is idle.</summary>
+    public bool FramesSupported;
     public FrameStats? Frames;
     public HardwareSample? Hardware;
     public SystemSample? System;
@@ -107,12 +110,10 @@ public sealed class Dashboard : IDisposable
     const int Width = TuringLcd.Width;
     const int Height = TuringLcd.Height;
     const int Pad = 6;
-    const int StripY = 26;
-    const int StripHeight = 16;
-    const int TopY = StripY + StripHeight + Pad;
-    const int TopHeight = 104;
+    const int TopY = 26;
+    const int TopHeight = 112;
     const int LeftWidth = 124;
-    const int FpsHeight = 64;
+    const int FpsHeight = 68;
     const int NetworkWidth = 92;
     const int EngineCharts = 4;
 
@@ -164,7 +165,6 @@ public sealed class Dashboard : IDisposable
 
         int bottom = TopY + TopHeight;
         int right = Width - Pad;
-        DrawDiskStrip(Rectangle.FromLTRB(Pad, StripY, right, StripY + StripHeight), state.System);
         DrawFpsCard(new Rectangle(Pad, TopY, LeftWidth, FpsHeight), state);
         DrawCountsCard(Rectangle.FromLTRB(Pad, TopY + FpsHeight + Pad, Pad + LeftWidth, bottom), state.System);
         DrawSystemCard(Rectangle.FromLTRB(Pad + LeftWidth + Pad, TopY, right - NetworkWidth - Pad, bottom), state);
@@ -189,9 +189,32 @@ public sealed class Dashboard : IDisposable
 
         if (state.Weather is { } weather)
         {
-            var text = $"{weather.Condition} {weather.Temperature:0}°C · 今日 {weather.Low:0}~{weather.High:0}°C";
+            var text = $"{weather.Condition} {weather.Temperature:0}°C · {weather.Low:0}~{weather.High:0}°C";
             _g.DrawString(text, _label, _muted, new RectangleF(0, 5, Width - Pad - 2, 18), _right);
         }
+
+        // Space used on the fixed drives as a bar, then read and write throughput.
+        var system = state.System;
+        float x = Pad + 2 + _g.MeasureString("00月00日 周六 00:00:00", _title, 300, _left).Width + 8;
+        const int y = 6;
+        using var accent = new SolidBrush(DiskColor);
+        x = DrawInline(x, y, ("SSD", "", "SSD", _smallBold, accent));
+
+        var bar = new Rectangle((int)x, y + 3, 40, 7);
+        using (var track = new SolidBrush(Grid))
+            _g.FillRectangle(track, bar);
+        float? share = system is { DiskTotalGb: > 0 } ? system.DiskUsedGb / system.DiskTotalGb : null;
+        if (share is { } used)
+            _g.FillRectangle(accent, bar with { Width = (int)(bar.Width * used) });
+
+        var read = Rate(system?.DiskReadBps);
+        var write = Rate(system?.DiskWriteBps);
+        DrawInline(bar.Right + 4, y,
+            (Number(share * 100), "%", "100", _number, _muted),
+            ("读", "", "读", _small, _muted),
+            (read.Value, read.Unit, "000.00", _number, _muted),
+            ("写", "", "写", _small, _muted),
+            (write.Value, write.Unit, "000.00", _number, _muted));
     }
 
     /// <summary>Frame rate of the foreground application: history on top, percentiles underneath.</summary>
@@ -212,7 +235,7 @@ public sealed class Dashboard : IDisposable
 
         var frames = state.Frames;
         if (!state.FramesAvailable) DrawNotice(chart, "FPS 指标离线");
-        else if (frames is null) DrawNotice(chart, "当前窗口不支持 FPS");
+        else if (frames is null && !state.FramesSupported) DrawNotice(chart, "当前窗口不支持 FPS");
 
         var rows = new (string Name, double? Ms)[]
         {
@@ -239,41 +262,6 @@ public sealed class Dashboard : IDisposable
         _g.DrawString(message, _small, _text, box.X + 4, box.Y + 2, _left);
     }
 
-    /// <summary>Space used on the fixed drives as a bar, with read and write throughput.</summary>
-    void DrawDiskStrip(Rectangle rect, SystemSample? system)
-    {
-        DrawCard(rect);
-        int x = rect.X + 8;
-        int y = rect.Y + 2;
-
-        using var accent = new SolidBrush(DiskColor);
-        _g.DrawString("SSD", _smallBold, accent, x, y, _left);
-
-        var bar = new Rectangle(x + 28, rect.Y + 5, 150, rect.Height - 10);
-        using (var track = new SolidBrush(Grid))
-            _g.FillRectangle(track, bar);
-        float? share = system is { DiskTotalGb: > 0 } ? system.DiskUsedGb / system.DiskTotalGb : null;
-        if (share is { } used)
-            _g.FillRectangle(accent, bar with { Width = (int)(bar.Width * used) });
-
-        DrawInline(bar.Right + 8, y,
-            (Number(share * 100), "%", "100", _number, _muted),
-            (Number(system?.DiskUsedGb), system is null ? "G" : $"/{system.DiskTotalGb:0}G", "0000", _number, _muted));
-
-        DrawRate(rect.X + 300, y, "读", system?.DiskReadBps);
-        DrawRate(rect.X + 386, y, "写", system?.DiskWriteBps);
-    }
-
-    void DrawRate(int x, int y, string label, double? bytesPerSecond)
-    {
-        _g.DrawString(label, _small, _muted, x, y, _left);
-        if (bytesPerSecond is not { } bps) return;
-
-        var (value, unit) = Speed(bps);
-        _g.DrawString(value, _number, _text, new RectangleF(x, y - 1, 52, 14), _right);
-        _g.DrawString(unit, _tiny, _muted, x + 54, y + 1, _left);
-    }
-
     void DrawCountsCard(Rectangle rect, SystemSample? system)
     {
         DrawCard(rect);
@@ -285,8 +273,8 @@ public sealed class Dashboard : IDisposable
         int w = (rect.Width - 16) / columns.Length;
         for (int i = 0; i < columns.Length; i++)
         {
-            _g.DrawString(columns[i].Name, _small, _muted, x + i * w, rect.Y + 4, _left);
-            _g.DrawString(columns[i].Value?.ToString() ?? "—", _smallBold, _text, x + i * w, rect.Y + 17, _left);
+            _g.DrawString(columns[i].Name, _small, _muted, x + i * w, rect.Y + 5, _left);
+            _g.DrawString(columns[i].Value?.ToString() ?? "—", _smallBold, _text, x + i * w, rect.Y + 19, _left);
         }
     }
 
@@ -371,7 +359,7 @@ public sealed class Dashboard : IDisposable
             (Number(gpu?.VramUsedGb, "0.0"), "G", "00.0", _number, memory),
             (Number(gpu?.PowerW), "W", "000", _number, _muted),
             (Number(gpu?.ClockMhz / 1000, "0.00"), "GHz", "0.00", _number, _muted));
-        var chart = new Rectangle(x, y + 17, w, 56);
+        var chart = new Rectangle(x, y + 17, w, 62);
         DrawAxes(chart, gpu?.VramTotalGb, "");
         DrawSeries(chart, state.Memory, 100, MemColor);
         DrawSeries(chart, state.Load, 100, color, fill: true);
@@ -515,6 +503,14 @@ public sealed class Dashboard : IDisposable
     static (string Value, string Unit) Speed(double bytesPerSecond) => bytesPerSecond >= 1048576
         ? ((bytesPerSecond / 1048576).ToString("0.00"), "MB/s")
         : ((bytesPerSecond / 1024).ToString("0.00"), "KB/s");
+
+    /// <summary>Throughput in megabytes per second, or kilobytes below one megabyte.</summary>
+    static (string Value, string Unit) Rate(double? bytesPerSecond) => bytesPerSecond switch
+    {
+        null => ("", "K"),
+        >= 1048576 => ((bytesPerSecond.Value / 1048576).ToString("0.00"), "M"),
+        _ => ((bytesPerSecond.Value / 1024).ToString("0.00"), "K"),
+    };
 
     static string Percent(float? value) => value is { } v ? $"{v:0}%" : "—";
 
