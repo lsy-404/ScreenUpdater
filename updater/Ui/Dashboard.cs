@@ -210,8 +210,12 @@ public sealed class Dashboard : IDisposable
         var read = Rate(system?.DiskReadBps);
         var write = Rate(system?.DiskWriteBps);
         x = DrawInline(bar.Right + 2, y, (Number(share * 100), "%", "100", _number, _muted));
-        x = DrawInline(x + 5, y, ("R", "", "R", _small, _muted), (read.Value, read.Unit, "000.00", _number, _muted));
-        DrawInline(x + 5, y, ("W", "", "W", _small, _muted), (write.Value, write.Unit, "000.00", _number, _muted));
+        // "K" and "M" differ in width, so the second rate is placed by the wider one.
+        float rateWidth = _g.MeasureString("W", _small, 300, _left).Width + 3
+            + _g.MeasureString("000.00", _number, 300, _left).Width
+            + _g.MeasureString("M", _tiny, 300, _left).Width + 3;
+        DrawInline(x + 5, y, ("R", "", "R", _small, _muted), (read.Value, read.Unit, "000.00", _number, _muted));
+        DrawInline(x + 5 + rateWidth + 5, y, ("W", "", "W", _small, _muted), (write.Value, write.Unit, "000.00", _number, _muted));
     }
 
     /// <summary>Frame rate of the foreground application: history on top, percentiles underneath.</summary>
