@@ -14,9 +14,10 @@ public sealed record GpuSample(
     string Name, float? Load, IReadOnlyList<EngineLoad> Engines, float? Temp, float? ClockMhz,
     float? PowerW, float? VramUsedGb, float VramTotalGb);
 
+/// <param name="IntegratedLoad">Busiest engine of the integrated adapter; null without one.</param>
 public sealed record HardwareSample(
     float CpuLoad, float CpuGhz, float? CpuTemp, float? CpuPower,
-    IReadOnlyList<GpuSample> Gpus,
+    IReadOnlyList<GpuSample> Gpus, float? IntegratedLoad,
     float MemLoad, float MemUsedGb, float MemTotalGb);
 
 /// <summary>
@@ -44,6 +45,7 @@ public sealed partial class Sensors : IDisposable
     readonly IntPtr _adapterMemory;
     readonly DriverSensors _driver = new();
     readonly Gpu[] _gpus;
+    readonly string? _integratedLuid;
 
     public Sensors()
     {
@@ -80,7 +82,10 @@ public sealed partial class Sensors : IDisposable
         {
             if (_gpus.FirstOrDefault(g => g.Name == name) is { } match) match.PowerLimitW = limit;
         }
-        foreach (var gpu in gpus.Except(_gpus)) Close(gpu);
+        var others = gpus.Except(_gpus).ToList();
+        // Software adapters report no dedicated memory.
+        _integratedLuid = others.Where(g => g.TotalGb > 0).MaxBy(g => g.TotalGb)?.LuidKey;
+        foreach (var gpu in others) Close(gpu);
     }
 
     public HardwareSample Sample()
@@ -120,11 +125,22 @@ public sealed partial class Sensors : IDisposable
                 gpu.TotalGb));
         }
 
+        float? integrated = null;
+        if (_integratedLuid is not null)
+        {
+            integrated = 0;
+            foreach (var ((luid, _, _), value) in engineLoad)
+            {
+                if (luid.Equals(_integratedLuid, StringComparison.OrdinalIgnoreCase))
+                    integrated = Math.Max(integrated.Value, (float)Math.Min(value, 100));
+            }
+        }
+
         return new HardwareSample(
             (float)Math.Min(_pdh.Value(_cpu) ?? 0, 100),
             (float)((_pdh.Value(_cpuBaseMhz) ?? 0) * (_pdh.Value(_cpuPerformance) ?? 0) / 100000),
             _driver.CpuTemp, _driver.CpuPower,
-            gpus, memory.MemoryLoad, usedGb, totalGb);
+            gpus, integrated, memory.MemoryLoad, usedGb, totalGb);
     }
 
     /// <summary>Utilisation per (adapter, engine index, engine type), summed over processes.</summary>

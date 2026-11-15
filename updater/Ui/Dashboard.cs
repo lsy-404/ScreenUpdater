@@ -77,6 +77,7 @@ public sealed class DashboardState
     public readonly History Fps = new(HistoryLength);
     public readonly History Cpu = new(HistoryLength);
     public readonly History Mem = new(HistoryLength);
+    public readonly History Integrated = new(HistoryLength);
     public readonly History Download = new(HistoryLength);
     public readonly History Upload = new(HistoryLength);
     public readonly GpuState[] Gpus = [.. Enumerable.Range(0, Sensors.GpuCount).Select(_ => new GpuState())];
@@ -95,7 +96,10 @@ public sealed class Dashboard : IDisposable
     static readonly Color MemColor = Color.FromArgb(0xb4, 0xa7, 0xf5);
     static readonly Color DownColor = Color.FromArgb(0x6c, 0xcb, 0x5f);
     static readonly Color UpColor = Color.FromArgb(0xff, 0x99, 0xa4);
-    static readonly Color[] GpuColors = [Color.FromArgb(0x5f, 0xd0, 0xb8), Color.FromArgb(0xf0, 0xa5, 0x60)];
+    static readonly Color GpuColor = Color.FromArgb(0x5f, 0xd0, 0xb8);
+    static readonly Color AmdColor = Color.FromArgb(0xed, 0x1c, 0x24);
+    static readonly Color NvidiaColor = Color.FromArgb(0x76, 0xb9, 0x00);
+    static readonly Color IntelColor = Color.FromArgb(0x00, 0x9f, 0xe3);
 
     static readonly string[] Weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 
@@ -167,8 +171,7 @@ public sealed class Dashboard : IDisposable
         for (int i = 0; i < Sensors.GpuCount; i++)
         {
             var gpu = state.Hardware is { } hw && i < hw.Gpus.Count ? hw.Gpus[i] : null;
-            DrawGpuCard(new Rectangle(Pad + i * (w + Pad), y, w, Height - y - Pad), gpu,
-                GpuColors[i % GpuColors.Length], state.Gpus[i]);
+            DrawGpuCard(new Rectangle(Pad + i * (w + Pad), y, w, Height - y - Pad), gpu, state.Gpus[i]);
         }
 
         return _bitmap;
@@ -250,17 +253,23 @@ public sealed class Dashboard : IDisposable
         using var memory = new SolidBrush(MemColor);
         float end = DrawInline(x, y,
             ("CPU", "", "CPU", _smallBold, cpu),
-            (Number(hw?.CpuLoad), "%", "100", _number, _text),
-            (Number(hw?.CpuGhz, "0.00"), "GHz", "0.00", _number, _text),
-            (Number(hw?.CpuPower), "W", "000", _number, _text),
-            (Number(hw?.CpuTemp), "°C", "00", _number, _text));
+            (Number(hw?.CpuLoad), "%", "100", _number, _muted),
+            (Number(hw?.CpuGhz, "0.00"), "GHz", "0.00", _number, _muted),
+            (Number(hw?.CpuPower), "W", "000", _number, _muted),
+            (Number(hw?.CpuTemp), "°C", "00", _number, _muted));
         DrawInline(end + 2, y,
             ("内存", "", "内存", _smallBold, memory),
-            (Number(hw?.MemLoad), "%", "100", _number, _text),
-            (Number(hw?.MemUsedGb, "0.0"), "G", "00.0", _number, _text));
+            (Number(hw?.MemLoad), "%", "100", _number, _muted),
+            (Number(hw?.MemUsedGb, "0.0"), "G", "00.0", _number, _muted));
         var chart = Rectangle.FromLTRB(x, y + 17, rect.Right - 8, rect.Bottom - 10);
         DrawAxes(chart, hw?.MemTotalGb, Unit(state.System?.MemoryMhz, "MHz"));
+        if (hw?.IntegratedLoad is not null)
+        {
+            using var integrated = new SolidBrush(GpuColor);
+            _g.DrawString("核显", _tiny, integrated, chart.X + 30, chart.Y + 2, _left);
+        }
         DrawSeries(chart, state.Mem, 100, MemColor);
+        DrawSeries(chart, state.Integrated, 100, GpuColor);
         DrawSeries(chart, state.Cpu, 100, CpuColor, fill: true);
         DrawTimeAxis(chart);
     }
@@ -296,23 +305,24 @@ public sealed class Dashboard : IDisposable
         _g.DrawString(value, _value, _text, new RectangleF(x, y, width - 25, 16), _right);
     }
 
-    void DrawGpuCard(Rectangle rect, GpuSample? gpu, Color color, GpuState state)
+    void DrawGpuCard(Rectangle rect, GpuSample? gpu, GpuState state)
     {
         DrawCard(rect);
         int x = rect.X + 10;
         int y = rect.Y + 4;
         int w = rect.Width - 20;
+        var color = GpuColor;
 
-        using var name = new SolidBrush(color);
+        using var name = new SolidBrush(VendorColor(gpu?.Name));
         using var memory = new SolidBrush(MemColor);
         var title = ShortGpuName(gpu?.Name);
         DrawInline(x, y,
             (title, "", title, _smallBold, name),
-            (Number(gpu?.Load), "%", "100", _number, _text),
-            (Number(gpu?.Temp), "°C", "00", _number, _text),
+            (Number(gpu?.Load), "%", "100", _number, _muted),
+            (Number(gpu?.Temp), "°C", "00", _number, _muted),
             (Number(gpu?.VramUsedGb, "0.0"), "G", "00.0", _number, memory),
-            (Number(gpu?.PowerW), "W", "000", _number, _text),
-            (Number(gpu?.ClockMhz / 1000, "0.00"), "GHz", "0.00", _number, _text));
+            (Number(gpu?.PowerW), "W", "000", _number, _muted),
+            (Number(gpu?.ClockMhz / 1000, "0.00"), "GHz", "0.00", _number, _muted));
         var chart = new Rectangle(x, y + 17, w, 62);
         DrawAxes(chart, gpu?.VramTotalGb, "");
         DrawSeries(chart, state.Memory, 100, MemColor);
@@ -371,7 +381,8 @@ public sealed class Dashboard : IDisposable
     }
 
     /// <summary>
-    /// Draws pieces left to right on one line: a value followed by its unit in a smaller, lighter face.
+    /// Draws pieces left to right on one line: a label in its own colour, or a white value followed by
+    /// its unit in a smaller, lighter face and the given colour.
     /// Each piece owns a slot as wide as its widest expected value, so pieces stay put while values change.
     /// Returns the x after the last slot.
     /// </summary>
@@ -379,9 +390,9 @@ public sealed class Dashboard : IDisposable
     {
         foreach (var (text, unit, widest, font, brush) in parts)
         {
-            _g.DrawString(text, font, brush, x, font == _number ? y - 1 : y, _left);
+            _g.DrawString(text, font, unit.Length > 0 ? _text : brush, x, font == _number ? y - 1 : y, _left);
             if (text.Length > 0 && unit.Length > 0)
-                _g.DrawString(unit, _tiny, _muted, x + _g.MeasureString(text, font, 300, _left).Width, y + 1, _left);
+                _g.DrawString(unit, _tiny, brush, x + _g.MeasureString(text, font, 300, _left).Width, y + 1, _left);
 
             x += _g.MeasureString(widest, font, 300, _left).Width + 3;
             if (unit.Length > 0) x += _g.MeasureString(unit, _tiny, 300, _left).Width;
@@ -462,6 +473,14 @@ public sealed class Dashboard : IDisposable
     static string Number(float? value, string format = "0") => value?.ToString(format) ?? "";
 
     static string Unit(float? value, string unit) => value is { } v ? $"{v:0}{unit}" : "";
+
+    static Color VendorColor(string? name) => name switch
+    {
+        not null when name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase) => NvidiaColor,
+        not null when name.Contains("AMD", StringComparison.OrdinalIgnoreCase) => AmdColor,
+        not null when name.Contains("Intel", StringComparison.OrdinalIgnoreCase) => IntelColor,
+        _ => Text,
+    };
 
     static string ShortGpuName(string? name)
     {
