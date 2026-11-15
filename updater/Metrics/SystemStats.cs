@@ -7,19 +7,43 @@ namespace ScreenUpdater.Metrics;
 
 /// <param name="DownloadBps">Bytes per second received on the busiest network interface.</param>
 /// <param name="MemoryMhz">Configured speed of the installed memory modules.</param>
+/// <param name="DiskUsedGb">Space in use, summed over the fixed drives.</param>
+/// <param name="DiskReadBps">Bytes per second read from all physical disks.</param>
 public sealed record SystemSample(
-    int Processes, int Threads, int Handles, double DownloadBps, double UploadBps, int? MemoryMhz);
+    int Processes, int Threads, int Handles, double DownloadBps, double UploadBps, int? MemoryMhz,
+    float DiskUsedGb, float DiskTotalGb, double DiskReadBps, double DiskWriteBps);
 
-/// <summary>Process, thread and handle totals, network throughput and memory speed.</summary>
-public sealed class SystemStats
+/// <summary>Process, thread and handle totals, network and disk throughput, disk usage and memory speed.</summary>
+public sealed class SystemStats : IDisposable
 {
+    readonly PdhQuery _pdh = new();
+    readonly IntPtr _diskRead;
+    readonly IntPtr _diskWrite;
     readonly Stopwatch _clock = Stopwatch.StartNew();
     readonly int? _memoryMhz = ReadMemorySpeed();
     Dictionary<string, (long Received, long Sent)> _previous = [];
     double _previousTime;
 
+    public SystemStats()
+    {
+        _diskRead = _pdh.Add(@"\PhysicalDisk(_Total)\Disk Read Bytes/sec");
+        _diskWrite = _pdh.Add(@"\PhysicalDisk(_Total)\Disk Write Bytes/sec");
+        _pdh.Collect();
+    }
+
+    public void Dispose() => _pdh.Dispose();
+
     public SystemSample Sample()
     {
+        _pdh.Collect();
+        long diskTotal = 0, diskFree = 0;
+        foreach (var drive in DriveInfo.GetDrives())
+        {
+            if (drive.DriveType != DriveType.Fixed || !drive.IsReady) continue;
+            diskTotal += drive.TotalSize;
+            diskFree += drive.TotalFreeSpace;
+        }
+
         var info = new PerformanceInformation { Size = (uint)Marshal.SizeOf<PerformanceInformation>() };
         GetPerformanceInfo(ref info, info.Size);
 
@@ -51,7 +75,9 @@ public sealed class SystemStats
 
         return new SystemSample(
             (int)info.ProcessCount, (int)info.ThreadCount, (int)info.HandleCount,
-            Math.Max(down, 0), Math.Max(up, 0), _memoryMhz);
+            Math.Max(down, 0), Math.Max(up, 0), _memoryMhz,
+            (diskTotal - diskFree) / 1073741824f, diskTotal / 1073741824f,
+            _pdh.Value(_diskRead) ?? 0, _pdh.Value(_diskWrite) ?? 0);
     }
 
     static int? ReadMemorySpeed()

@@ -40,7 +40,7 @@ const int ScrubHeight = 16;
 using var frames = new FrameMonitor(
     config.PresentMonPath, baseDirectory, previewPath is null ? "ScreenUpdater" : "ScreenUpdaterPreview", Log);
 using var sensors = new Sensors();
-var system = new SystemStats();
+using var system = new SystemStats();
 using var power = new DisplayPower();
 using var dashboard = new Dashboard();
 using var weather = config is { Latitude: { } latitude, Longitude: { } longitude }
