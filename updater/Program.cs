@@ -64,7 +64,7 @@ void Sample()
 
     var hardware = state.Hardware = sensors.Sample();
     state.Cpu.Add(hardware.CpuLoad);
-    state.Mem.Add(hardware.MemLoad);
+    state.Mem.Add(hardware.MemUsedGb / hardware.MemTotalGb * 100);
     state.Integrated.Add(hardware.IntegratedLoad);
     for (int i = 0; i < hardware.Gpus.Count; i++)
         state.Gpus[i].Add(hardware.Gpus[i]);

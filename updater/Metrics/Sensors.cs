@@ -93,7 +93,10 @@ public sealed partial class Sensors : IDisposable
     {
         var memory = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };
         GlobalMemoryStatusEx(ref memory);
-        float totalGb = memory.TotalPhysical / 1073741824f;
+        // Installed memory; the amount Windows can use is smaller by what the firmware and integrated graphics reserve.
+        float totalGb = GetPhysicallyInstalledSystemMemory(out ulong installedKb)
+            ? installedKb / 1048576f
+            : memory.TotalPhysical / 1073741824f;
         float usedGb = (memory.TotalPhysical - memory.AvailablePhysical) / 1073741824f;
 
         _pdh.Collect();
@@ -310,4 +313,7 @@ public sealed partial class Sensors : IDisposable
 
     [DllImport("kernel32.dll")]
     static extern bool GlobalMemoryStatusEx(ref MemoryStatus status);
+
+    [DllImport("kernel32.dll")]
+    static extern bool GetPhysicallyInstalledSystemMemory(out ulong kilobytes);
 }
