@@ -69,6 +69,9 @@ public sealed class DashboardState
     /// <summary>The foreground application has presented before, so no frames means it is idle.</summary>
     public bool FramesSupported;
     public FrameStats? Frames;
+
+    /// <summary>Refresh rates of the connected displays, highest first.</summary>
+    public int[] RefreshRates = [];
     public HardwareSample? Hardware;
     public SystemSample? System;
     public WeatherReport? Weather;
@@ -140,6 +143,7 @@ public sealed class Dashboard : IDisposable
     readonly StringFormat _right = new(StringFormat.GenericTypographic)
     {
         Alignment = StringAlignment.Far,
+        Trimming = StringTrimming.EllipsisCharacter,
         FormatFlags = StringFormatFlags.NoWrap,
     };
 
@@ -183,12 +187,6 @@ public sealed class Dashboard : IDisposable
         var clock = $"{now.Month}月{now.Day}日 {Weekdays[(int)now.DayOfWeek]} {now:HH:mm:ss}";
         _g.DrawString(clock, _title, _text, Pad + 2, 4, _left);
 
-        if (state.Weather is { } weather)
-        {
-            var text = $"{weather.Condition} {weather.Temperature:0}°C · {weather.Low:0}~{weather.High:0}°C";
-            _g.DrawString(text, _label, _muted, new RectangleF(0, 5, Width - Pad - 2, 18), _right);
-        }
-
         // Space used on the fixed drives as a bar, then read and write throughput.
         var system = state.System;
         float x = Pad + 2 + _g.MeasureString("00月00日 周六 00:00:00", _title, 300, _left).Width + 8;
@@ -196,7 +194,7 @@ public sealed class Dashboard : IDisposable
         using var accent = new SolidBrush(DiskColor);
         x = DrawInline(x, y, ("SSD", "", "SSD", _smallBold, accent));
 
-        var bar = new Rectangle((int)x, y + 3, 40, 7);
+        var bar = new Rectangle((int)x, y + 3, 28, 7);
         using (var track = new SolidBrush(Grid))
             _g.FillRectangle(track, bar);
         float? share = system is { DiskTotalGb: > 0 } ? system.DiskUsedGb / system.DiskTotalGb : null;
@@ -207,7 +205,13 @@ public sealed class Dashboard : IDisposable
         var write = Rate(system?.DiskWriteBps);
         x = DrawInline(bar.Right + 2, y, (Number(share * 100), "%", "100", _number, _muted));
         x = DrawRate(x + 5, y, "R", read);
-        DrawRate(x + 9, y, "W", write);
+        x = DrawRate(x + 9, y, "W", write);
+
+        if (state.Weather is { } weather)
+        {
+            var text = $"{weather.Condition} {weather.Temperature:0}°C · {weather.Low:0}~{weather.High:0}°C";
+            _g.DrawString(text, _label, _muted, RectangleF.FromLTRB(x + 4, 5, Width - Pad - 2, 23), _right);
+        }
     }
 
     /// <summary>A label, a value of constant width, and the unit centred in a slot of its own.</summary>
@@ -233,15 +237,32 @@ public sealed class Dashboard : IDisposable
 
         _g.DrawString("FPS", _small, _muted, x, y, _left);
 
-        var chart = new Rectangle(x, y + 14, w, rect.Height - 38);
-        DrawGrid(chart);
-        float max = MathF.Max(60, MathF.Ceiling(state.Fps.Max() / 30) * 30);
-        _g.DrawString(max.ToString("0"), _small, _muted, new RectangleF(x, y, w, 12), _right);
+        var frames = state.Frames;
+        if (frames is { } current)
+            _g.DrawString(current.Fps.ToString("0"), _number, _text, new RectangleF(x, y - 1, w, 14), _right);
+
+        // The axis ends at the fastest display; every display's refresh rate gets a line and a label beside the chart.
+        const int gutter = 20;
+        const int labelHeight = 9;
+        var area = new Rectangle(x, y + 14, w, rect.Height - 38);
+        var chart = area with { Width = w - gutter };
+        var rates = state.RefreshRates.Length > 0 ? state.RefreshRates : [60];
+        float max = rates[0];
+        using (var pen = new Pen(Grid))
+        {
+            _g.DrawLine(pen, chart.X, chart.Bottom, chart.Right, chart.Bottom);
+            for (int i = 0; i < rates.Length && (i + 1) * labelHeight <= chart.Height + 3; i++)
+            {
+                int line = chart.Bottom - (int)(chart.Height * rates[i] / max);
+                _g.DrawLine(pen, chart.X, line, chart.Right, line);
+                _g.DrawString(rates[i].ToString(), _tiny, i == 0 ? _text : _muted,
+                    new RectangleF(chart.Right, chart.Y - 4 + i * labelHeight, gutter, 12), _right);
+            }
+        }
         DrawSeries(chart, state.Fps, max, FpsColor, fill: true);
 
-        var frames = state.Frames;
-        if (!state.FramesAvailable) DrawNotice(chart, "FPS 指标离线");
-        else if (frames is null && !state.FramesSupported) DrawNotice(chart, "当前窗口不支持 FPS");
+        if (!state.FramesAvailable) DrawNotice(area, "FPS 指标离线");
+        else if (frames is null && !state.FramesSupported) DrawNotice(area, "当前窗口不支持 FPS");
 
         var rows = new (string Name, double? Ms)[]
         {
