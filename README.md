@@ -19,6 +19,7 @@
 | 数据 | 来源 |
 |---|---|
 | CPU 利用率与频率、GPU 利用率与显存 | Windows 性能计数器（PDH） |
+| NVIDIA 显卡利用率（含计算负载）与功耗上限 | 驱动自带的 NVML |
 | GPU 温度 | `D3DKMTQueryAdapterInfo`（`KMTQAITYPE_ADAPTERPERFDATA`） |
 | CPU 温度与功耗、GPU 频率 | [LibreHardwareMonitorLib](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)，CPU 部分需要 [PawnIO](https://pawnio.eu/) 驱动和管理员权限 |
 | 帧时间 | [PresentMon](https://github.com/GameTechDev/PresentMon) 控制台程序 |

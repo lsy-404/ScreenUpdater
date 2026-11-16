@@ -7,7 +7,7 @@ namespace ScreenUpdater.Metrics;
 /// <param name="Type">The driver's name for the engine, e.g. "3D", "Video Codec 0" or "VideoEncode".</param>
 public sealed record EngineLoad(string Type, int Index, float Load);
 
-/// <param name="Load">Busiest engine of the adapter, as Task Manager reports utilisation.</param>
+/// <param name="Load">Busiest engine of the adapter, as Task Manager reports utilisation, or the driver's own figure when higher.</param>
 /// <param name="Engines">Utilisation per engine type of this adapter, in engine order.</param>
 /// <param name="PowerW">Measured by the driver, or else the adapter's power limit scaled by the share the display kernel reports.</param>
 public sealed record GpuSample(
@@ -44,6 +44,7 @@ public sealed partial class Sensors : IDisposable
     readonly IntPtr _engines;
     readonly IntPtr _adapterMemory;
     readonly DriverSensors _driver = new();
+    readonly Nvml _nvml = new();
     readonly Gpu[] _gpus;
     readonly string? _integratedLuid;
 
@@ -78,10 +79,7 @@ public sealed partial class Sensors : IDisposable
             }
         }
         _gpus = [.. gpus.OrderByDescending(g => g.TotalGb).Take(GpuCount)];
-        foreach (var (name, limit) in Nvml.ReadPowerLimits())
-        {
-            if (_gpus.FirstOrDefault(g => g.Name == name) is { } match) match.PowerLimitW = limit;
-        }
+        foreach (var gpu in _gpus) gpu.PowerLimitW = _nvml.PowerLimit(gpu.Name);
         var others = gpus.Except(_gpus).ToList();
         // Software adapters report no dedicated memory.
         _integratedLuid = others.Where(g => g.TotalGb > 0).MaxBy(g => g.TotalGb)?.LuidKey;
@@ -116,6 +114,7 @@ public sealed partial class Sensors : IDisposable
                     ? existing with { Load = Math.Max(existing.Load, clamped) }
                     : new EngineLoad(type, int.Parse(index), clamped);
             }
+            if (_nvml.Load(gpu.Name) is { } measured) load = Math.Max(load ?? 0, measured);
             driver.TryGetValue(gpu.Name, out var reading);
             var (temperature, powerShare) = ReadPerformance(gpu);
             gpus.Add(new GpuSample(
@@ -216,6 +215,7 @@ public sealed partial class Sensors : IDisposable
         foreach (var gpu in _gpus) Close(gpu);
         _pdh.Dispose();
         _driver.Dispose();
+        _nvml.Dispose();
     }
 
     const int AdapterPerfDataType = 62; // KMTQAITYPE_ADAPTERPERFDATA
