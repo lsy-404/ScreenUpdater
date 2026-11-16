@@ -3,6 +3,9 @@ using System.Text;
 
 namespace ScreenUpdater.Metrics;
 
+/// <param name="Gpu">Percent of time any kernel was running, graphics and compute alike.</param>
+public readonly record struct NvidiaUsage(float Gpu, float Encoder, float Decoder);
+
 /// <summary>Power limit and utilisation of NVIDIA adapters, from the management library shipped with the driver.</summary>
 public sealed class Nvml : IDisposable
 {
@@ -35,6 +38,12 @@ public sealed class Nvml : IDisposable
 
     [DllImport(Dll)]
     static extern int nvmlDeviceGetUtilizationRates(IntPtr device, out Utilization utilization);
+
+    [DllImport(Dll)]
+    static extern int nvmlDeviceGetEncoderUtilization(IntPtr device, out uint utilization, out uint samplingPeriodUs);
+
+    [DllImport(Dll)]
+    static extern int nvmlDeviceGetDecoderUtilization(IntPtr device, out uint utilization, out uint samplingPeriodUs);
 
     readonly Dictionary<string, IntPtr> _devices = [];
     readonly bool _initialised;
@@ -72,10 +81,15 @@ public sealed class Nvml : IDisposable
     /// Utilisation in percent as the driver measures it, which includes compute work
     /// that never shows up in the Windows engine counters.
     /// </summary>
-    public float? Load(string adapterName) =>
-        _devices.TryGetValue(adapterName, out var device) && nvmlDeviceGetUtilizationRates(device, out var utilization) == 0
-            ? utilization.Gpu
-            : null;
+    public NvidiaUsage? Usage(string adapterName)
+    {
+        if (!_devices.TryGetValue(adapterName, out var device)) return null;
+        if (nvmlDeviceGetUtilizationRates(device, out var utilization) != 0) return null;
+
+        nvmlDeviceGetEncoderUtilization(device, out uint encoder, out _);
+        nvmlDeviceGetDecoderUtilization(device, out uint decoder, out _);
+        return new NvidiaUsage(utilization.Gpu, encoder, decoder);
+    }
 
     public void Dispose()
     {

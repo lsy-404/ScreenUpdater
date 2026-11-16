@@ -37,9 +37,6 @@ public sealed class EngineTrack(int index)
 {
     public int Index => index;
     public History History { get; } = new(DashboardState.HistoryLength);
-
-    /// <summary>Accumulated utilisation, used to rank engines by how much they are used.</summary>
-    public double Total;
 }
 
 public sealed class GpuState
@@ -59,7 +56,6 @@ public sealed class GpuState
             if (!Engines.TryGetValue(engine.Type, out var track))
                 Engines[engine.Type] = track = new EngineTrack(engine.Index);
             track.History.Add(engine.Load);
-            track.Total += engine.Load;
         }
     }
 }
@@ -375,12 +371,7 @@ public sealed class Dashboard : IDisposable
         DrawSeries(chart, state.Load, 100, color, fill: true);
         DrawTimeAxis(chart);
 
-        // The most used engine types, kept in the adapter's own order so cells do not jump around.
-        var engines = state.Engines
-            .OrderByDescending(e => e.Value.Total).ThenBy(e => e.Value.Index)
-            .Take(EngineCharts)
-            .OrderBy(e => e.Value.Index)
-            .ToList();
+        var engines = state.Engines.OrderBy(e => e.Value.Index).Take(EngineCharts).ToList();
 
         const int gap = 6;
         int top = chart.Bottom + 9;

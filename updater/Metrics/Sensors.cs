@@ -4,11 +4,11 @@ using Microsoft.Win32;
 
 namespace ScreenUpdater.Metrics;
 
-/// <param name="Type">The driver's name for the engine, e.g. "3D", "Video Codec 0" or "VideoEncode".</param>
+/// <param name="Type">Kind of work, e.g. "3D", "Compute" or "CUDA".</param>
 public sealed record EngineLoad(string Type, int Index, float Load);
 
 /// <param name="Load">Busiest engine of the adapter, as Task Manager reports utilisation, or the driver's own figure when higher.</param>
-/// <param name="Engines">Utilisation per engine type of this adapter, in engine order.</param>
+/// <param name="Engines">Utilisation per kind of work, four per adapter in a fixed order.</param>
 /// <param name="PowerW">Measured by the driver, or else the adapter's power limit scaled by the share the display kernel reports.</param>
 public sealed record GpuSample(
     string Name, float? Load, IReadOnlyList<EngineLoad> Engines, float? Temp, float? ClockMhz,
@@ -102,23 +102,43 @@ public sealed partial class Sensors : IDisposable
         foreach (var gpu in _gpus)
         {
             float? load = null;
-            var engines = new Dictionary<string, EngineLoad>();
-            foreach (var ((luid, index, type), value) in engineLoad)
+            var engines = new List<(string Type, float Load)>();
+            foreach (var ((luid, _, type), value) in engineLoad)
             {
                 if (!luid.Equals(gpu.LuidKey, StringComparison.OrdinalIgnoreCase)) continue;
                 float clamped = (float)Math.Min(value, 100);
                 load = Math.Max(load ?? 0, clamped);
-
-                // Engines sharing a type (several "Copy" nodes) are shown as one, at the busiest value.
-                engines[type] = engines.TryGetValue(type, out var existing)
-                    ? existing with { Load = Math.Max(existing.Load, clamped) }
-                    : new EngineLoad(type, int.Parse(index), clamped);
+                engines.Add((type, clamped));
             }
-            if (_nvml.Load(gpu.Name) is { } measured) load = Math.Max(load ?? 0, measured);
+
+            // Engines of one kind ("Compute 0", "High Priority Compute") are shown as one, at the busiest value.
+            float Busiest(string kind) => engines
+                .Where(e => e.Type.Contains(kind, StringComparison.OrdinalIgnoreCase))
+                .Select(e => e.Load).DefaultIfEmpty(0).Max();
+
+            IReadOnlyList<EngineLoad> kinds;
+            if (_nvml.Usage(gpu.Name) is { } nvidia)
+            {
+                // The driver lists no compute engine, so compute is what its total shows beyond the listed engines.
+                kinds =
+                [
+                    new("3D", 0, Busiest("3D")), new("CUDA", 1, Math.Max(nvidia.Gpu - (load ?? 0), 0)),
+                    new("Encoder", 2, nvidia.Encoder), new("Decoder", 3, nvidia.Decoder),
+                ];
+                load = Math.Max(load ?? 0, nvidia.Gpu);
+            }
+            else
+            {
+                kinds =
+                [
+                    new("3D", 0, Busiest("3D")), new("Compute", 1, Busiest("Compute")),
+                    new("Video", 2, Busiest("Video")), new("Copy", 3, Busiest("Copy")),
+                ];
+            }
             driver.TryGetValue(gpu.Name, out var reading);
             var (temperature, powerShare) = ReadPerformance(gpu);
             gpus.Add(new GpuSample(
-                gpu.Name, load, [.. engines.Values.OrderBy(e => e.Index)], temperature, reading.ClockMhz,
+                gpu.Name, load, kinds, temperature, reading.ClockMhz,
                 reading.PowerW ?? gpu.PowerLimitW * powerShare,
                 dedicated.TryGetValue(gpu.LuidKey, out double bytes) ? (float)(bytes / 1073741824) : null,
                 gpu.TotalGb));

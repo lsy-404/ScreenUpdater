@@ -10,7 +10,7 @@
 - 进程、线程、句柄总数
 - CPU 与内存叠加曲线（左轴利用率，右轴 GB），CPU 频率、功耗、温度，内存用量与频率
 - 网络上下行速度与曲线
-- 两张独立显卡：利用率与显存主图、温度，以及各自驱动报告的分引擎利用率（3D、Copy、Video 等）
+- 两张独立显卡：利用率与显存主图、温度，以及按负载类型的分项（AMD：3D、Compute、Video、Copy；NVIDIA：3D、CUDA、Encoder、Decoder）
 
 主显示器关闭时副屏随之关闭。画面每分钟整体平移 1–2 像素，避免静态内容长期停在同一位置。串口整帧传输约 0.6–1.8 秒，因此每秒只发送发生变化的区域。
 
@@ -19,7 +19,7 @@
 | 数据 | 来源 |
 |---|---|
 | CPU 利用率与频率、GPU 利用率与显存 | Windows 性能计数器（PDH） |
-| NVIDIA 显卡利用率（含计算负载）与功耗上限 | 驱动自带的 NVML |
+| NVIDIA 显卡利用率（含 CUDA 负载）、编码 / 解码利用率与功耗上限 | 驱动自带的 NVML |
 | GPU 温度 | `D3DKMTQueryAdapterInfo`（`KMTQAITYPE_ADAPTERPERFDATA`） |
 | CPU 温度与功耗、GPU 频率 | [LibreHardwareMonitorLib](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)，CPU 部分需要 [PawnIO](https://pawnio.eu/) 驱动和管理员权限 |
 | 帧时间 | [PresentMon](https://github.com/GameTechDev/PresentMon) 控制台程序 |
