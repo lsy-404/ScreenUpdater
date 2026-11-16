@@ -239,30 +239,25 @@ public sealed class Dashboard : IDisposable
 
         var frames = state.Frames;
         if (frames is { } current)
-            _g.DrawString(current.Fps.ToString("0"), _number, _text, new RectangleF(x, y - 1, w, 14), _right);
+            _g.DrawString(current.Fps.ToString("0"), _number, _text, x + 24, y - 1, _left);
 
-        // The axis ends at the fastest display; every display's refresh rate gets a line and a label beside the chart.
-        const int gutter = 20;
-        const int labelHeight = 9;
-        var area = new Rectangle(x, y + 14, w, rect.Height - 38);
-        var chart = area with { Width = w - gutter };
+        // The axis ends at the fastest display, with a line at every display's refresh rate.
+        var chart = new Rectangle(x, y + 14, w, rect.Height - 38);
         var rates = state.RefreshRates.Length > 0 ? state.RefreshRates : [60];
         float max = rates[0];
         using (var pen = new Pen(Grid))
         {
             _g.DrawLine(pen, chart.X, chart.Bottom, chart.Right, chart.Bottom);
-            for (int i = 0; i < rates.Length && (i + 1) * labelHeight <= chart.Height + 3; i++)
+            foreach (int rate in rates)
             {
-                int line = chart.Bottom - (int)(chart.Height * rates[i] / max);
+                int line = chart.Bottom - (int)(chart.Height * rate / max);
                 _g.DrawLine(pen, chart.X, line, chart.Right, line);
-                _g.DrawString(rates[i].ToString(), _tiny, i == 0 ? _text : _muted,
-                    new RectangleF(chart.Right, chart.Y - 4 + i * labelHeight, gutter, 12), _right);
             }
         }
         DrawSeries(chart, state.Fps, max, FpsColor, fill: true);
 
-        if (!state.FramesAvailable) DrawNotice(area, "FPS 指标离线");
-        else if (frames is null && !state.FramesSupported) DrawNotice(area, "当前窗口不支持 FPS");
+        if (!state.FramesAvailable) DrawNotice(chart, "FPS 指标离线");
+        else if (frames is null && !state.FramesSupported) DrawNotice(chart, "当前窗口不支持 FPS");
 
         var rows = new (string Name, double? Ms)[]
         {
