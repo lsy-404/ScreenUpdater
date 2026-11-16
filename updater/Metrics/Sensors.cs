@@ -121,8 +121,10 @@ public sealed partial class Sensors : IDisposable
 
             float video = Busiest("Video");
             float compute = Busiest("Compute");
+            string computeName = "Compute";
             if (_nvml.Usage(gpu.Name) is { } nvidia)
             {
+                computeName = "CUDA";
                 // The driver lists no compute engine, so compute is what its total shows beyond the listed engines.
                 compute = Math.Max(nvidia.Gpu - (load ?? 0), 0);
                 video = Math.Max(video, Math.Max(nvidia.Encoder, nvidia.Decoder));
@@ -137,8 +139,8 @@ public sealed partial class Sensors : IDisposable
 
             IReadOnlyList<EngineLoad> kinds =
             [
-                new("3D", 0, Busiest("3D")), new("视频", 1, video),
-                new("AI", 2, compute), new(gpu.OtherEngine, 3, other.Load),
+                new("3D", 0, Busiest("3D")), new("Video", 1, video),
+                new(computeName, 2, compute), new(gpu.OtherEngine, 3, other.Load),
             ];
             driver.TryGetValue(gpu.Name, out var reading);
             var (temperature, powerShare) = ReadPerformance(gpu);
