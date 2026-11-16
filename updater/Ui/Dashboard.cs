@@ -45,7 +45,7 @@ public sealed class GpuState
 
     /// <summary>Dedicated memory in use, as a percentage of the adapter's total.</summary>
     public readonly History Memory = new(DashboardState.HistoryLength);
-    public readonly Dictionary<string, EngineTrack> Engines = [];
+    public readonly Dictionary<int, EngineTrack> Engines = [];
 
     public void Add(GpuSample sample)
     {
@@ -53,8 +53,8 @@ public sealed class GpuState
         Memory.Add(sample.VramUsedGb / sample.VramTotalGb * 100);
         foreach (var engine in sample.Engines)
         {
-            if (!Engines.TryGetValue(engine.Type, out var track))
-                Engines[engine.Type] = track = new EngineTrack(engine.Index);
+            if (!Engines.TryGetValue(engine.Index, out var track))
+                Engines[engine.Index] = track = new EngineTrack(engine.Index);
             track.History.Add(engine.Load);
         }
     }
@@ -379,10 +379,11 @@ public sealed class Dashboard : IDisposable
         int cellH = (rect.Bottom - 6 - top - 3) / 2;
         for (int i = 0; i < engines.Count; i++)
         {
-            var (type, track) = engines[i];
+            var (index, track) = engines[i];
             var cell = new Rectangle(x + i % 2 * (cellW + gap), top + i / 2 * (cellH + 3), cellW, cellH);
-            float? load = gpu?.Engines.FirstOrDefault(e => e.Type == type)?.Load;
-            _g.DrawString(type, _small, _muted, new RectangleF(cell.X, cell.Y, cell.Width - 26, 12), _left);
+            var engine = gpu?.Engines.FirstOrDefault(e => e.Index == index);
+            float? load = engine?.Load;
+            _g.DrawString(engine?.Type ?? "", _small, _muted, new RectangleF(cell.X, cell.Y, cell.Width - 26, 12), _left);
             _g.DrawString(Percent(load), _smallBold, _text, new RectangleF(cell.X, cell.Y, cell.Width, 12), _right);
 
             var engineChart = Rectangle.FromLTRB(cell.X, cell.Y + 13, cell.Right, cell.Bottom);

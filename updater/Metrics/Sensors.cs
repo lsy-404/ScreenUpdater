@@ -4,7 +4,7 @@ using Microsoft.Win32;
 
 namespace ScreenUpdater.Metrics;
 
-/// <param name="Type">Kind of work, e.g. "3D", "Compute" or "CUDA".</param>
+/// <param name="Type">Kind of work shown as the label; the last of the four carries the name of its engine.</param>
 public sealed record EngineLoad(string Type, int Index, float Load);
 
 /// <param name="Load">Busiest engine of the adapter, as Task Manager reports utilisation, or the driver's own figure when higher.</param>
@@ -28,12 +28,15 @@ public sealed partial class Sensors : IDisposable
 {
     public const int GpuCount = 2;
 
+    static readonly string[] Common = ["3D", "Video", "Compute"];
+
     sealed class Gpu
     {
         public required string Name;
         public required string LuidKey;
         public required float TotalGb;
         public float? PowerLimitW;
+        public string OtherEngine = "其他";
         public uint Handle;
     }
 
@@ -116,25 +119,27 @@ public sealed partial class Sensors : IDisposable
                 .Where(e => e.Type.Contains(kind, StringComparison.OrdinalIgnoreCase))
                 .Select(e => e.Load).DefaultIfEmpty(0).Max();
 
-            IReadOnlyList<EngineLoad> kinds;
+            float video = Busiest("Video");
+            float compute = Busiest("Compute");
             if (_nvml.Usage(gpu.Name) is { } nvidia)
             {
                 // The driver lists no compute engine, so compute is what its total shows beyond the listed engines.
-                kinds =
-                [
-                    new("3D", 0, Busiest("3D")), new("CUDA", 1, Math.Max(nvidia.Gpu - (load ?? 0), 0)),
-                    new("Encoder", 2, nvidia.Encoder), new("Decoder", 3, nvidia.Decoder),
-                ];
+                compute = Math.Max(nvidia.Gpu - (load ?? 0), 0);
+                video = Math.Max(video, Math.Max(nvidia.Encoder, nvidia.Decoder));
                 load = Math.Max(load ?? 0, nvidia.Gpu);
             }
-            else
-            {
-                kinds =
-                [
-                    new("3D", 0, Busiest("3D")), new("Compute", 1, Busiest("Compute")),
-                    new("Video", 2, Busiest("Video")), new("Copy", 3, Busiest("Copy")),
-                ];
-            }
+
+            // The busiest of the remaining engines; its name stays until another one takes over.
+            var other = engines
+                .Where(e => !Common.Any(kind => e.Type.Contains(kind, StringComparison.OrdinalIgnoreCase)))
+                .DefaultIfEmpty((Type: "", Load: 0f)).MaxBy(e => e.Load);
+            if (other.Load > 0) gpu.OtherEngine = other.Type;
+
+            IReadOnlyList<EngineLoad> kinds =
+            [
+                new("3D", 0, Busiest("3D")), new("视频", 1, video),
+                new("AI", 2, compute), new(gpu.OtherEngine, 3, other.Load),
+            ];
             driver.TryGetValue(gpu.Name, out var reading);
             var (temperature, powerShare) = ReadPerformance(gpu);
             gpus.Add(new GpuSample(
