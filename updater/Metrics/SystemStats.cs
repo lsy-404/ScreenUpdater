@@ -1,6 +1,4 @@
-using System.Diagnostics;
 using System.Management;
-using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
 
 namespace ScreenUpdater.Metrics;
@@ -19,13 +17,14 @@ public sealed class SystemStats : IDisposable
     readonly PdhQuery _pdh = new();
     readonly IntPtr _diskRead;
     readonly IntPtr _diskWrite;
-    readonly Stopwatch _clock = Stopwatch.StartNew();
+    readonly IntPtr _netReceived;
+    readonly IntPtr _netSent;
     readonly int? _memoryMhz = ReadMemorySpeed();
-    Dictionary<string, (long Received, long Sent)> _previous = [];
-    double _previousTime;
 
     public SystemStats()
     {
+        _netReceived = _pdh.Add(@"\Network Interface(*)\Bytes Received/sec");
+        _netSent = _pdh.Add(@"\Network Interface(*)\Bytes Sent/sec");
         _diskRead = _pdh.Add(@"\PhysicalDisk(_Total)\Disk Read Bytes/sec");
         _diskWrite = _pdh.Add(@"\PhysicalDisk(_Total)\Disk Write Bytes/sec");
         _pdh.Collect();
@@ -47,31 +46,18 @@ public sealed class SystemStats : IDisposable
         var info = new PerformanceInformation { Size = (uint)Marshal.SizeOf<PerformanceInformation>() };
         GetPerformanceInfo(ref info, info.Size);
 
-        double now = _clock.Elapsed.TotalSeconds;
-        double elapsed = now - _previousTime;
-        var current = new Dictionary<string, (long Received, long Sent)>();
+        var sent = _pdh.Values(_netSent);
         double down = 0, up = 0;
-
-        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+        // Adapters can repeat each other's traffic, so take the busiest one rather than the sum.
+        foreach (var (adapter, adapterDown) in _pdh.Values(_netReceived))
         {
-            if (nic.OperationalStatus != OperationalStatus.Up || nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
-
-            var stats = nic.GetIPStatistics();
-            current[nic.Id] = (stats.BytesReceived, stats.BytesSent);
-            if (!_previous.TryGetValue(nic.Id, out var before) || elapsed <= 0) continue;
-
-            // Virtual switches and tunnels repeat the physical adapter's traffic, so take the busiest interface rather than the sum.
-            double nicDown = (stats.BytesReceived - before.Received) / elapsed;
-            double nicUp = (stats.BytesSent - before.Sent) / elapsed;
-            if (nicDown + nicUp > down + up)
+            double adapterUp = sent.GetValueOrDefault(adapter);
+            if (adapterDown + adapterUp > down + up)
             {
-                down = nicDown;
-                up = nicUp;
+                down = adapterDown;
+                up = adapterUp;
             }
         }
-
-        _previous = current;
-        _previousTime = now;
 
         return new SystemSample(
             (int)info.ProcessCount, (int)info.ThreadCount, (int)info.HandleCount,
