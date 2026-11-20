@@ -198,14 +198,15 @@ public sealed class Dashboard : IDisposable
         using var accent = new SolidBrush(DiskLevelColor(share));
         x = DrawInline(x, y, ("SSD", "", "SSD", _smallBold, accent));
 
-        var bar = new Rectangle((int)x, y + 3, 40, 7);
+        var bar = new Rectangle((int)x, y + 3, 30, 7);
         using (var track = new SolidBrush(Grid))
             _g.FillRectangle(track, bar);
         if (share is { } used)
             _g.FillRectangle(accent, bar with { Width = (int)Math.Round(bar.Width * Math.Clamp(used, 0, 1)) });
 
         var free = Size(system?.DiskFreeGb);
-        x = DrawInline(bar.Right + 3, y, (free.Value, free.Unit, "000", _number, _muted));
+        x = DrawInline(bar.Right + 3, y,
+            (Number(share * 100), "%", "100", _number, _muted), (free.Value, free.Unit, "000", _number, _muted));
         x = DrawRate(x + 3, y, "R", Rate(system?.DiskReadBps));
         x = DrawRate(x + 5, y, "W", Rate(system?.DiskWriteBps));
 
