@@ -6,10 +6,11 @@ namespace ScreenUpdater.Metrics;
 /// <param name="DownloadBps">Bytes per second received on the busiest network interface.</param>
 /// <param name="MemoryMhz">Configured speed of the installed memory modules.</param>
 /// <param name="DiskUsedGb">Space in use, summed over the fixed drives.</param>
+/// <param name="DiskFreeGb">Space this user can still write, summed over the fixed drives.</param>
 /// <param name="DiskReadBps">Bytes per second read from all physical disks.</param>
 public sealed record SystemSample(
     int Processes, int Threads, int Handles, double DownloadBps, double UploadBps, int? MemoryMhz,
-    float DiskUsedGb, float DiskTotalGb, double DiskReadBps, double DiskWriteBps);
+    float DiskUsedGb, float DiskTotalGb, float DiskFreeGb, double DiskReadBps, double DiskWriteBps);
 
 /// <summary>Process, thread and handle totals, network and disk throughput, disk usage and memory speed.</summary>
 public sealed class SystemStats : IDisposable
@@ -35,12 +36,13 @@ public sealed class SystemStats : IDisposable
     public SystemSample Sample()
     {
         _pdh.Collect();
-        long diskTotal = 0, diskFree = 0;
+        long diskTotal = 0, diskFree = 0, diskAvailable = 0;
         foreach (var drive in DriveInfo.GetDrives())
         {
             if (drive.DriveType != DriveType.Fixed || !drive.IsReady) continue;
             diskTotal += drive.TotalSize;
             diskFree += drive.TotalFreeSpace;
+            diskAvailable += drive.AvailableFreeSpace;
         }
 
         var info = new PerformanceInformation { Size = (uint)Marshal.SizeOf<PerformanceInformation>() };
@@ -62,7 +64,7 @@ public sealed class SystemStats : IDisposable
         return new SystemSample(
             (int)info.ProcessCount, (int)info.ThreadCount, (int)info.HandleCount,
             Math.Max(down, 0), Math.Max(up, 0), _memoryMhz,
-            (diskTotal - diskFree) / 1073741824f, diskTotal / 1073741824f,
+            (diskTotal - diskFree) / 1073741824f, diskTotal / 1073741824f, diskAvailable / 1073741824f,
             _pdh.Value(_diskRead) ?? 0, _pdh.Value(_diskWrite) ?? 0);
     }
 

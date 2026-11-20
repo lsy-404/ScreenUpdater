@@ -98,7 +98,10 @@ public sealed class Dashboard : IDisposable
     static readonly Color MemColor = Color.FromArgb(0xb4, 0xa7, 0xf5);
     static readonly Color DownColor = Color.FromArgb(0x6c, 0xcb, 0x5f);
     static readonly Color UpColor = Color.FromArgb(0xff, 0x99, 0xa4);
-    static readonly Color DiskColor = Color.FromArgb(0xf0, 0xa5, 0x60);
+    static readonly Color DiskIdle = Color.FromArgb(0x6c, 0xcb, 0x5f);
+    static readonly Color DiskFilling = Color.FromArgb(0xfc, 0xe1, 0x00);
+    static readonly Color DiskFull = Color.FromArgb(0xf0, 0xa5, 0x60);
+    static readonly Color DiskCritical = Color.FromArgb(0xff, 0x5c, 0x5c);
     static readonly Color GpuColor =Color.FromArgb(0x5f, 0xd0, 0xb8);
     static readonly Color AmdColor = Color.FromArgb(0xff, 0x5c, 0x5c);
     static readonly Color NvidiaColor = Color.FromArgb(0x76, 0xb9, 0x00);
@@ -187,25 +190,24 @@ public sealed class Dashboard : IDisposable
         var clock = $"{now.Month}月{now.Day}日 {Weekdays[(int)now.DayOfWeek]} {now:HH:mm:ss}";
         _g.DrawString(clock, _title, _text, Pad + 2, 4, _left);
 
-        // Space used on the fixed drives as a bar, then read and write throughput.
+        // Space used on the fixed drives as a bar coloured by how full they are, the space left, then throughput.
         var system = state.System;
-        float x = Pad + 2 + _g.MeasureString("00月00日 周六 00:00:00", _title, 300, _left).Width + 8;
+        float x = Pad + 2 + _g.MeasureString("00月00日 周六 00:00:00", _title, 300, _left).Width + 4;
         const int y = 6;
-        using var accent = new SolidBrush(DiskColor);
+        float? share = system is { DiskTotalGb: > 0 } ? system.DiskUsedGb / system.DiskTotalGb : null;
+        using var accent = new SolidBrush(DiskLevelColor(share));
         x = DrawInline(x, y, ("SSD", "", "SSD", _smallBold, accent));
 
-        var bar = new Rectangle((int)x, y + 3, 28, 7);
+        var bar = new Rectangle((int)x, y + 3, 40, 7);
         using (var track = new SolidBrush(Grid))
             _g.FillRectangle(track, bar);
-        float? share = system is { DiskTotalGb: > 0 } ? system.DiskUsedGb / system.DiskTotalGb : null;
         if (share is { } used)
-            _g.FillRectangle(accent, bar with { Width = (int)(bar.Width * used) });
+            _g.FillRectangle(accent, bar with { Width = (int)Math.Round(bar.Width * Math.Clamp(used, 0, 1)) });
 
-        var read = Rate(system?.DiskReadBps);
-        var write = Rate(system?.DiskWriteBps);
-        x = DrawInline(bar.Right + 2, y, (Number(share * 100), "%", "100", _number, _muted));
-        x = DrawRate(x + 5, y, "R", read);
-        x = DrawRate(x + 9, y, "W", write);
+        var free = Size(system?.DiskFreeGb);
+        x = DrawInline(bar.Right + 3, y, (free.Value, free.Unit, "000", _number, _muted));
+        x = DrawRate(x + 3, y, "R", Rate(system?.DiskReadBps));
+        x = DrawRate(x + 5, y, "W", Rate(system?.DiskWriteBps));
 
         if (state.Weather is { } weather)
         {
@@ -217,10 +219,10 @@ public sealed class Dashboard : IDisposable
     /// <summary>A label, a value of constant width, and the unit centred in a slot of its own.</summary>
     float DrawRate(float x, int y, string label, (string Value, string Unit) rate)
     {
-        const int unitGap = 3;
-        const int unitSlot = 9;
+        const int unitGap = 1;
+        const int unitSlot = 8;
         x = DrawInline(x, y, (label, "", "W", _small, _muted));
-        float width = _g.MeasureString("000.00", _number, 300, _left).Width;
+        float width = _g.MeasureString("00.00", _number, 300, _left).Width;
         _g.DrawString(rate.Value, _number, _text, new RectangleF(x - 20, y - 1, width + 20, 14), _right);
         if (rate.Value.Length > 0)
             _g.DrawString(rate.Unit, _tiny, _muted, new RectangleF(x + width + unitGap, y + 1, unitSlot, 12), _center);
@@ -529,12 +531,28 @@ public sealed class Dashboard : IDisposable
         ? ((bytesPerSecond / 1048576).ToString("0.00"), "MB/s")
         : ((bytesPerSecond / 1024).ToString("0.00"), "KB/s");
 
-    /// <summary>Throughput in megabytes per second, or kilobytes below one megabyte.</summary>
-    static (string Value, string Unit) Rate(double? bytesPerSecond) => bytesPerSecond switch
+    /// <summary>Megabytes per second, or kilobytes below one megabyte; one decimal from 100 up so values fit five characters.</summary>
+    static (string Value, string Unit) Rate(double? bytesPerSecond)
     {
-        null => ("", "M"),
-        >= 1024000 => ((bytesPerSecond.Value / 1048576).ToString("0.00"), "M"),
-        _ => ((bytesPerSecond.Value / 1024).ToString("0.00"), "K"),
+        if (bytesPerSecond is not { } bps) return ("", "M");
+        var (value, unit) = bps >= 1024000 ? (bps / 1048576, "M") : (bps / 1024, "K");
+        return (value.ToString(value >= 99.995 ? "0.0" : "0.00"), unit);
+    }
+
+    static (string Value, string Unit) Size(float? gigabytes) => gigabytes switch
+    {
+        null => ("", "G"),
+        >= 999.5f => ((gigabytes.Value / 1024).ToString("0.00"), "T"),
+        _ => (gigabytes.Value.ToString("0"), "G"),
+    };
+
+    /// <summary>Idle, filling, full and critical, by the share of space in use.</summary>
+    static Color DiskLevelColor(float? share) => share switch
+    {
+        null or < 0.70f => DiskIdle,
+        < 0.85f => DiskFilling,
+        < 0.95f => DiskFull,
+        _ => DiskCritical,
     };
 
     static string Percent(float? value) => value is { } v ? $"{v:0}%" : "—";
