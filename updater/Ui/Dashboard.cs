@@ -85,6 +85,16 @@ public sealed class DashboardState
     public readonly GpuState[] Gpus = [.. Enumerable.Range(0, Sensors.GpuCount).Select(_ => new GpuState())];
 }
 
+/// <summary>One piece of an inline row; <see cref="Value"/> overrides the white of the number.</summary>
+public readonly record struct InlinePart(string Text, string Unit, string Widest, Font Font, Brush Brush, Brush? Value = null)
+{
+    public static implicit operator InlinePart((string, string, string, Font, Brush) p) =>
+        new(p.Item1, p.Item2, p.Item3, p.Item4, p.Item5);
+
+    public static implicit operator InlinePart((string, string, string, Font, Brush, Brush) p) =>
+        new(p.Item1, p.Item2, p.Item3, p.Item4, p.Item5, p.Item6);
+}
+
 public sealed class Dashboard : IDisposable
 {
     static readonly Color Background = Color.FromArgb(0x1c, 0x1c, 0x1c);
@@ -131,6 +141,9 @@ public sealed class Dashboard : IDisposable
     readonly Font _tiny = new("Segoe UI", 9, FontStyle.Regular, GraphicsUnit.Pixel);
 
     readonly SolidBrush _text = new(Text);
+    readonly SolidBrush _warning = new(Color.FromArgb(0xff, 0xf0, 0x96));
+    readonly SolidBrush _danger = new(Color.FromArgb(0xf0, 0xb4, 0x00));
+    readonly SolidBrush _critical = new(Color.FromArgb(0xff, 0x5c, 0x5c));
     readonly SolidBrush _muted = new(Muted);
 
     readonly StringFormat _left = new(StringFormat.GenericTypographic)
@@ -314,14 +327,15 @@ public sealed class Dashboard : IDisposable
         using var memory = new SolidBrush(MemColor);
         float end = DrawInline(x, y,
             ("CPU", "", "CPU", _smallBold, cpu),
-            (Number(hw?.CpuLoad), "%", "100", _number, _muted),
+            (Number(hw?.CpuLoad), "%", "100", _number, _muted, ShareLevel(hw?.CpuLoad / 100)),
             (Number(hw?.CpuGhz, "0.00"), "GHz", "0.00", _number, _muted),
             (Number(hw?.CpuPower), "W", "000", _number, _muted),
-            (Number(hw?.CpuTemp), "°C", "00", _number, _muted));
+            (Number(hw?.CpuTemp), "°C", "00", _number, _muted, TempLevel(hw?.CpuTemp)));
+        var memLevel = ShareLevel(hw?.MemLoad / 100);
         DrawInline(end + 2, y,
             ("内存", "", "内存", _smallBold, memory),
-            (Number(hw?.MemLoad), "%", "100", _number, _muted),
-            (Number(hw?.MemUsedGb, "0.0"), "G", "00.0", _number, _muted));
+            (Number(hw?.MemLoad), "%", "100", _number, _muted, memLevel),
+            (Number(hw?.MemUsedGb, "0.0"), "G", "00.0", _number, _muted, memLevel));
         var chart = Rectangle.FromLTRB(x, y + 17, rect.Right - 8, rect.Bottom - 10);
         DrawAxes(chart, hw?.MemTotalGb, Unit(state.System?.MemoryMhz, "MHz"));
         if (hw?.IntegratedLoad is not null)
@@ -347,8 +361,8 @@ public sealed class Dashboard : IDisposable
         int x = rect.X + 8;
         int w = rect.Width - 16;
 
-        DrawSpeed(x, rect.Y + 4, w, "↑", UpColor, state.System?.UploadBps);
-        DrawSpeed(x, rect.Y + 19, w, "↓", DownColor, state.System?.DownloadBps);
+        DrawSpeed(x, rect.Y + 4, w, "↑", UpColor, state.System?.UploadBps, UploadReferenceBps);
+        DrawSpeed(x, rect.Y + 19, w, "↓", DownColor, state.System?.DownloadBps, DownloadReferenceBps);
 
         var chart = Rectangle.FromLTRB(x, rect.Y + 38, rect.Right - 8, rect.Bottom - 6);
         var upper = chart with { Height = chart.Height / 2 };
@@ -360,7 +374,8 @@ public sealed class Dashboard : IDisposable
         DrawSeries(upper, state.Upload, max, UpColor, fill: true, compress: true);
         DrawSeries(lower, state.Download, max, DownColor, fill: true, downward: true, compress: true);
     }
-    void DrawSpeed(int x, int y, int width, string arrow, Color color, double? bytesPerSecond)
+    /// <param name="referenceBps">Throughput counted as fully used when picking the value's level.</param>
+    void DrawSpeed(int x, int y, int width, string arrow, Color color, double? bytesPerSecond, double referenceBps)
     {
         using (var brush = new SolidBrush(color))
             _g.DrawString(arrow, _value, brush, x, y - 1, _left);
@@ -368,7 +383,7 @@ public sealed class Dashboard : IDisposable
 
         var (value, unit) = Speed(bps);
         _g.DrawString(unit, _small, _muted, new RectangleF(x, y + 2, width, 12), _right);
-        _g.DrawString(value, _value, _text, new RectangleF(x, y, width - 25, 16), _right);
+        _g.DrawString(value, _value, ShareLevel((float)(bps / referenceBps)), new RectangleF(x, y, width - 25, 16), _right);
     }
 
     void DrawGpuCard(Rectangle rect, GpuSample? gpu, GpuState state)
@@ -384,9 +399,10 @@ public sealed class Dashboard : IDisposable
         var title = ShortGpuName(gpu?.Name);
         DrawInline(x, y,
             (title, "", title, _smallBold, name),
-            (Number(gpu?.Load), "%", "100", _number, _muted),
-            (Number(gpu?.Temp), "°C", "00", _number, _muted),
-            (Number(gpu?.VramUsedGb, "0.0"), "G", "00.0", _number, memory),
+            (Number(gpu?.Load), "%", "100", _number, _muted, ShareLevel(gpu?.Load / 100)),
+            (Number(gpu?.Temp), "°C", "00", _number, _muted, TempLevel(gpu?.Temp)),
+            (Number(gpu?.VramUsedGb, "0.0"), "G", "00.0", _number, memory,
+                ShareLevel(gpu is { VramTotalGb: > 0 } ? gpu.VramUsedGb / gpu.VramTotalGb : null)),
             (Number(gpu?.PowerW), "W", "000", _number, _muted),
             (Number(gpu?.ClockMhz / 1000, "0.00"), "GHz", "0.00", _number, _muted));
         var chart = new Rectangle(x, y + 17, w, 62);
@@ -408,7 +424,7 @@ public sealed class Dashboard : IDisposable
             var engine = gpu?.Engines.FirstOrDefault(e => e.Index == index);
             float? load = engine?.Load;
             _g.DrawString(engine?.Type ?? "", _small, _muted, new RectangleF(cell.X, cell.Y, cell.Width - 26, 12), _left);
-            _g.DrawString(Percent(load), _smallBold, _text, new RectangleF(cell.X, cell.Y, cell.Width, 12), _right);
+            _g.DrawString(Percent(load), _smallBold, ShareLevel(load / 100), new RectangleF(cell.X, cell.Y, cell.Width, 12), _right);
 
             var engineChart = Rectangle.FromLTRB(cell.X, cell.Y + 13, cell.Right, cell.Bottom);
             DrawGrid(engineChart);
@@ -443,14 +459,14 @@ public sealed class Dashboard : IDisposable
     }
 
     /// <summary>
-    /// Draws pieces left to right on one line: a label in its own colour, or a white value followed by
+    /// Draws pieces left to right on one line: a label in its own colour, or a value (white unless given a level colour) followed by
     /// its unit in a smaller, lighter face and the given colour.
     /// Each piece owns a slot as wide as its widest expected value, so pieces stay put while values change.
     /// Returns the x after the last slot.
     /// </summary>
-    float DrawInline(float x, int y, params (string Text, string Unit, string Widest, Font Font, Brush Brush)[] parts)
+    float DrawInline(float x, int y, params InlinePart[] parts)
     {
-        foreach (var (text, unit, widest, font, brush) in parts)
+        foreach (var (text, unit, widest, font, brush, value) in parts)
         {
             float slot = _g.MeasureString(widest, font, 300, _left).Width;
             if (unit.Length == 0)
@@ -460,7 +476,7 @@ public sealed class Dashboard : IDisposable
             else
             {
                 // Right-aligned against the unit, which keeps both in place whatever the digit count.
-                _g.DrawString(text, font, _text, new RectangleF(x - 20, y - 1, slot + 20, 14), _right);
+                _g.DrawString(text, font, value ?? _text, new RectangleF(x - 20, y - 1, slot + 20, 14), _right);
                 if (text.Length > 0) _g.DrawString(unit, _tiny, brush, x + slot, y + 1, _left);
                 x += _g.MeasureString(unit, _tiny, 300, _left).Width;
             }
@@ -552,6 +568,28 @@ public sealed class Dashboard : IDisposable
         _ => (gigabytes.Value.ToString("0"), "G"),
     };
 
+    /// <summary>Half of a gigabit link; upload is held to a lower bar since the uplink saturates first.</summary>
+    const double DownloadReferenceBps = 1e9 / 8 * 0.5;
+    const double UploadReferenceBps = DownloadReferenceBps * 0.5;
+
+    /// <summary>Normal, warning, danger and critical value colours by the share of capacity in use.</summary>
+    Brush ShareLevel(float? share) => share switch
+    {
+        null or < 0.70f => _text,
+        < 0.85f => _warning,
+        < 0.95f => _danger,
+        _ => _critical,
+    };
+
+    /// <summary>Value colour by temperature, stepping up below the 89–90 °C limits of these CPUs and GPUs.</summary>
+    Brush TempLevel(float? celsius) => celsius switch
+    {
+        null or < 70 => _text,
+        < 80 => _warning,
+        < 87 => _danger,
+        _ => _critical,
+    };
+
     /// <summary>Idle, filling, full and critical, by the share of space in use.</summary>
     static Color DiskLevelColor(float? share) => share switch
     {
@@ -621,6 +659,9 @@ public sealed class Dashboard : IDisposable
         _number.Dispose();
         _tiny.Dispose();
         _text.Dispose();
+        _warning.Dispose();
+        _danger.Dispose();
+        _critical.Dispose();
         _muted.Dispose();
         _left.Dispose();
         _center.Dispose();
