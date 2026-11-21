@@ -79,9 +79,6 @@ public sealed class DashboardState
     public readonly History Fps = new(HistoryLength);
     public readonly History Cpu = new(HistoryLength);
     public readonly History Mem = new(HistoryLength);
-
-    /// <summary>Memory in use plus the reclaimable standby cache, as a percentage of the total.</summary>
-    public readonly History MemStandby = new(HistoryLength);
     public readonly History Integrated = new(HistoryLength);
     public readonly History Download = new(HistoryLength);
     public readonly History Upload = new(HistoryLength);
@@ -337,8 +334,7 @@ public sealed class Dashboard : IDisposable
             using var cached = new SolidBrush(Color.FromArgb(160, MemColor));
             _g.DrawString($"可释放 {system.MemStandbyGb:0.0}G", _tiny, cached, chart.X + 56, chart.Y + 2, _left);
         }
-        DrawBand(chart, state.Mem, state.MemStandby, 100, MemColor);
-        DrawSeries(chart, state.Mem, 100, MemColor);
+        DrawSeries(chart, state.Mem, 100, MemColor, fill: true);
         DrawSeries(chart, state.Integrated, 100, GpuColor);
         DrawSeries(chart, state.Cpu, 100, CpuColor, fill: true);
         DrawTimeAxis(chart);
@@ -532,45 +528,6 @@ public sealed class Dashboard : IDisposable
             if (compress) ratio = MathF.Sqrt(ratio);
             float offset = ratio * chart.Height;
             run.Add(new PointF(chart.X + i * step, downward ? baseline + offset : baseline - offset));
-        }
-        Flush();
-        _g.SmoothingMode = SmoothingMode.None;
-    }
-
-    /// <summary>Faintly shades the area between two series, with a dashed line along the upper one.</summary>
-    void DrawBand(Rectangle chart, History lower, History upper, float max, Color color)
-    {
-        _g.SmoothingMode = SmoothingMode.AntiAlias;
-        using var area = new SolidBrush(Color.FromArgb(20, color));
-        using var pen = new Pen(color, 1.2f) { DashPattern = [4, 3] };
-        float step = (float)chart.Width / (upper.Capacity - 1);
-        float Y(float v) => chart.Bottom - Math.Clamp(v / max, 0, 1) * chart.Height;
-        var top = new List<PointF>();
-        var bottom = new List<PointF>();
-
-        void Flush()
-        {
-            if (top.Count > 1)
-            {
-                bottom.Reverse();
-                _g.FillPolygon(area, [.. top, .. bottom]);
-                _g.DrawLines(pen, top.ToArray());
-            }
-            top.Clear();
-            bottom.Clear();
-        }
-
-        for (int i = 0; i < upper.Capacity; i++)
-        {
-            float hi = upper[i], lo = lower[i];
-            if (float.IsNaN(hi) || float.IsNaN(lo))
-            {
-                Flush();
-                continue;
-            }
-            float x = chart.X + i * step;
-            top.Add(new PointF(x, Y(hi)));
-            bottom.Add(new PointF(x, Y(lo)));
         }
         Flush();
         _g.SmoothingMode = SmoothingMode.None;
