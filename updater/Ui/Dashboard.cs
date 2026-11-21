@@ -537,12 +537,12 @@ public sealed class Dashboard : IDisposable
         _g.SmoothingMode = SmoothingMode.None;
     }
 
-    /// <summary>Shades the area between two series, with a dotted line along the upper one.</summary>
+    /// <summary>Faintly shades the area between two series, with a dashed line along the upper one.</summary>
     void DrawBand(Rectangle chart, History lower, History upper, float max, Color color)
     {
         _g.SmoothingMode = SmoothingMode.AntiAlias;
-        using var area = new SolidBrush(Color.FromArgb(45, color));
-        using var pen = new Pen(Color.FromArgb(150, color), 1f) { DashStyle = DashStyle.Dot };
+        using var area = new SolidBrush(Color.FromArgb(20, color));
+        using var pen = new Pen(color, 1.2f) { DashPattern = [4, 3] };
         float step = (float)chart.Width / (upper.Capacity - 1);
         float Y(float v) => chart.Bottom - Math.Clamp(v / max, 0, 1) * chart.Height;
         var top = new List<PointF>();
