@@ -81,7 +81,7 @@ public sealed class DashboardState
     public readonly History Mem = new(HistoryLength);
 
     /// <summary>Memory in use plus the reclaimable standby cache, as a percentage of the total.</summary>
-    public readonly History MemStandby = new(HistoryLength);
+    public readonly History MemOccupied = new(HistoryLength);
     public readonly History Integrated = new(HistoryLength);
     public readonly History Download = new(HistoryLength);
     public readonly History Upload = new(HistoryLength);
@@ -337,8 +337,8 @@ public sealed class Dashboard : IDisposable
             using var cached = new SolidBrush(Color.FromArgb(160, MemColor));
             _g.DrawString($"可释放 {system.MemStandbyGb:0.0}G", _tiny, cached, chart.X + 56, chart.Y + 2, _left);
         }
-        DrawBand(chart, state.Mem, state.MemStandby, 100, MemColor);
-        DrawSeries(chart, state.Mem, 100, MemColor);
+        DrawBand(chart, state.Mem, state.MemOccupied, 100, MemColor);
+        DrawSeries(chart, state.MemOccupied, 100, MemColor);
         DrawSeries(chart, state.Integrated, 100, GpuColor);
         DrawSeries(chart, state.Cpu, 100, CpuColor, fill: true);
         DrawTimeAxis(chart);
@@ -537,7 +537,7 @@ public sealed class Dashboard : IDisposable
         _g.SmoothingMode = SmoothingMode.None;
     }
 
-    /// <summary>Faintly shades the area between two series, with a dashed line along the upper one.</summary>
+    /// <summary>Faintly shades the area between two series, with a dashed line along the lower one.</summary>
     void DrawBand(Rectangle chart, History lower, History upper, float max, Color color)
     {
         _g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -552,9 +552,9 @@ public sealed class Dashboard : IDisposable
         {
             if (top.Count > 1)
             {
+                _g.DrawLines(pen, bottom.ToArray());
                 bottom.Reverse();
                 _g.FillPolygon(area, [.. top, .. bottom]);
-                _g.DrawLines(pen, top.ToArray());
             }
             top.Clear();
             bottom.Clear();
