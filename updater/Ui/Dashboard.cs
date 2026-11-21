@@ -338,16 +338,6 @@ public sealed class Dashboard : IDisposable
             (Number(hw?.MemUsedGb, "0.0"), "G", "00.0", _number, _muted, memLevel));
         var chart = Rectangle.FromLTRB(x, y + 17, rect.Right - 8, rect.Bottom - 10);
         DrawAxes(chart, hw?.MemTotalGb, Unit(state.System?.MemoryMhz, "MHz"));
-        if (hw?.IntegratedLoad is not null)
-        {
-            using var integrated = new SolidBrush(GpuColor);
-            _g.DrawString("核显", _tiny, integrated, chart.X + 30, chart.Y + 2, _left);
-        }
-        if (state.System is { } system)
-        {
-            using var cached = new SolidBrush(Color.FromArgb(160, MemColor));
-            _g.DrawString($"可释放 {system.MemStandbyGb:0.0}G", _tiny, cached, chart.X + 56, chart.Y + 2, _left);
-        }
         DrawSeries(chart, state.Mem, 100, MemColor, fill: true);
         DrawSeries(chart, state.Integrated, 100, GpuColor);
         DrawSeries(chart, state.Cpu, 100, CpuColor, fill: true);
